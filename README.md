@@ -33,7 +33,7 @@ GPS module/dongle and/or Phone (IOS/Android) ------> GPSD ------> GPSD-ng ------
   - Setup bt-tether and check
   - Install a GPS app:
     - __Android__: BlueNMEA (https://github.com/MaxKellermann/BlueNMEA not tested)
-    - __Android/IOS__: GPS2IP (tested but paid app)
+    - __IOS__: GPS2IP (tested but paid app)
       - Set "operate in background mode"
       - Set "Connection Method" -> "Socket" -> "Port Number" -> 4352
       - Set "Network selection" -> "Hotspot"
