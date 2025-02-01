@@ -1,6 +1,8 @@
 # GPSD-ng
 Use GPSD server to retreive and save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)
 
+![Front image of pwnagotchi](pwnagotchi.jpeg)
+
 __Advantages__:
 - GPS configuration independant from pwnagotchi
 - Early position polling
