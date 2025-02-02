@@ -13,12 +13,14 @@
 # main.plugins.gpsd.gpsdhost = "127.0.0.1"
 # main.plugins.gpsd.gpsdport = 2947
 # main.plugins.gpsd.compact_view = true
-
+# main.plugins.gpsd.position = "127,64"
 
 
 import threading
 import json
 import logging
+import re
+import time
 from datetime import datetime, UTC
 import gps
 
@@ -39,27 +41,25 @@ class GPSD(threading.Thread):
         self.session = None
         self.devices = dict()
         self.last_position = None
-        self.last_clean = datetime.now()
+        self.last_clean = datetime.now(tz=UTC)
         self.lock = threading.Lock()
         self.running = True
         self.connect()
 
     def connect(self):
         with self.lock:
+            logging.info(f"[GPSD-ng] Trying to connect")
             try:
-                logging.info(f"[GPSD-ng] trying to connect")
                 self.session = gps.gps(
                     host=self.gpsdhost,
                     port=self.gpsdport,
-                    reconnect=True,
                     mode=gps.WATCH_ENABLE | gps.WATCH_NEWSTYLE,
                 )
             except Exception as e:
                 logging.error(f"[GPSD-ng] Error updating GPS: {e}")
                 self.session = None
 
-    @staticmethod
-    def is_old(date, max_seconds=90):
+    def is_old(self, date, max_seconds=90):
         try:
             d_time = datetime.strptime(date, self.DATE_FORMAT)
             d_time = d_time.replace(tzinfo=UTC)
@@ -69,9 +69,10 @@ class GPSD(threading.Thread):
         return delta.total_seconds() > max_seconds
 
     def clean(self):
-        if (datetime.now() - self.last_clean).total_seconds() < 10:
+        if (datetime.now(tz=UTC) - self.last_clean).total_seconds() < 10:
             return
-        self.last_clean = datetime.now()
+        self.last_clean = datetime.now(tz=UTC)
+        logging.debug(f"[GPSD-ng] Start cleaning")
         with self.lock:
             devices_to_clean = []
             for device in filter(lambda x: self.devices[x], self.devices):
@@ -79,21 +80,28 @@ class GPSD(threading.Thread):
                     devices_to_clean.append(device)
             for device in devices_to_clean:
                 self.devices[device] = None
-                logging.info(f"[GPSD-ng] Cleaning {device}")
+                logging.debug(f"[GPSD-ng] Cleaning {device}")
 
             if self.last_position and self.is_old(self.last_position["Date"], 120):
                 self.last_position = None
+                logging.debug(f"[GPSD-ng] Cleaning last position")
 
     def update(self):
         with self.lock:
-            if self.session.fix.mode < 2:  # Remove positions without fix
+            if (
+                not self.session.device or self.session.fix.mode < 2
+            ):  # Remove positions without fix
                 return
+            logging.debug(f"[GPSD-ng] Updating data {self.session.device}")
             self.devices[self.session.device] = dict(
                 Latitude=self.session.fix.latitude,
                 Longitude=self.session.fix.longitude,
                 Altitude=(
-                    self.session.fix.altitude if self.session.fix.mode > 2 else None
+                    self.session.fix.altMSL if self.session.fix.mode > 2 else None
                 ),
+                Speed=(
+                    self.session.fix.speed * 0.514444
+                ),  # speed in knots converted in m/s
                 Date=self.session.fix.time,
                 Updated=self.session.fix.time,  # Wigle plugin
                 Mode=self.session.fix.mode,
@@ -101,7 +109,7 @@ class GPSD(threading.Thread):
                 Sats=len(self.session.satellites),
                 Sats_Valid=self.session.satellites_used,
                 Device=self.session.device,
-                Accuracy=50.0,  # Wigle plugin
+                Accuracy=self.session.fix.sep,  # Wigle plugin, we use GPS EPE
             )
 
     def run(self):
@@ -109,9 +117,14 @@ class GPSD(threading.Thread):
         while self.running:
             self.clean()
             if not self.session:
-                self.connected()
-            elif self.session.read() == 0 and self.session.device:
+                self.connect()
+            elif self.session.read() == 0:
                 self.update()
+            else:
+                logging.info("[GPSD-ng] Closing connection")
+                self.session.close()
+                self.session = None
+                time.sleep(1)
 
     def join(self, timeout=None):
         self.running = False
@@ -142,11 +155,9 @@ class GPSD(threading.Thread):
 
 class GPSD_ng(plugins.Plugin):
     __author__ = "@fmatray"
-    __version__ = "1.0.0"
+    __version__ = "1.1.0"
     __license__ = "GPL3"
-    __description__ = (
-        "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
-    )
+    __description__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
     LINE_SPACING = 10
     LABEL_SPACING = 0
 
@@ -169,11 +180,10 @@ class GPSD_ng(plugins.Plugin):
         try:
             self.gpsd = GPSD(self.options["gpsdhost"], self.options["gpsdport"])
             self.gpsd.start()
-            self.running = True
             logging.info("[GPSD-ng] plugin loaded")
         except Exception as e:
-            self.running = False
-            logging.error(f"[GPSD-ng] Error on loading: {e}")
+            logging.error(f"[GPSD-ng] Error on loading. Trying later...")
+        self.running = True
 
     def on_unload(self, ui):
         self.gpsd.join()
@@ -190,8 +200,19 @@ class GPSD_ng(plugins.Plugin):
         try:
             logging.info(f"[GPSD-ng] Disabling bettercap's gps module")
             agent.run("gps off")
-        except Exception:
-            logging.info(f"[GPSD-ng] Bettercap gps was already off")
+        except Exception as e:
+            logging.info(f"[GPSD-ng] Bettercap gps was already off.")
+
+    # on_internet_available() is used to update GPS to bettercap.
+    # Not ideal but I can't find another function to do it.
+    def on_internet_available(self, agent):
+        coords = self.gpsd.get_position()
+        if not self.check_coords(coords):
+            return
+        try:
+            agent.run(f"set gps.set {coords['Latitude']} {coords['Longitude']}")
+        except Exception as e:
+            logging.error(f"[GPSD-ng] Cannot set bettercap GPS: {e}")
 
     def on_handshake(self, agent, filename, access_point, client_station):
         if not self.running:
@@ -223,31 +244,38 @@ class GPSD_ng(plugins.Plugin):
             lat_pos = (pos[0] + 5, pos[1])
             lon_pos = (pos[0], pos[1] + line_spacing)
             alt_pos = (pos[0] + 5, pos[1] + (2 * line_spacing))
+            spe_pos = (pos[0] + 5, pos[1] + (3 * line_spacing))
         except KeyError:
             if ui.is_waveshare_v2():
-                lat_pos = (127, 74)
-                lon_pos = (122, 84)
-                alt_pos = (127, 94)
+                lat_pos = (127, 64)
+                lon_pos = (122, 74)
+                alt_pos = (127, 84)
+                spe_pos = (127, 94)
             elif ui.is_waveshare_v1():
-                lat_pos = (130, 70)
-                lon_pos = (125, 80)
-                alt_pos = (130, 90)
+                lat_pos = (130, 60)
+                lon_pos = (130, 70)
+                alt_pos = (130, 80)
+                spe_pos = (130, 90)
             elif ui.is_inky():
-                lat_pos = (127, 60)
-                lon_pos = (122, 70)
-                alt_pos = (127, 80)
+                lat_pos = (127, 50)
+                lon_pos = (122, 60)
+                alt_pos = (127, 70)
+                spe_pos = (127, 80)
             elif ui.is_waveshare144lcd():
-                lat_pos = (67, 73)
-                lon_pos = (62, 83)
-                alt_pos = (67, 93)
+                lat_pos = (67, 63)
+                lon_pos = (67, 73)
+                alt_pos = (67, 83)
+                spe_pos = (67, 93)
             elif ui.is_dfrobot_v2():
-                lat_pos = (127, 74)
-                lon_pos = (122, 84)
-                alt_pos = (127, 94)
+                lat_pos = (127, 64)
+                lon_pos = (122, 74)
+                alt_pos = (127, 84)
+                spe_pos = (127, 94)
             else:
-                lat_pos = (127, 51)
-                lon_pos = (122, 61)
-                alt_pos = (127, 71)
+                lat_pos = (127, 41)
+                lon_pos = (122, 51)
+                alt_pos = (127, 61)
+                spe_pos = (127, 71)
 
         if self.options["compact_view"]:
             ui.add_element(
@@ -263,10 +291,11 @@ class GPSD_ng(plugins.Plugin):
                 ),
             )
             return
-        for key, label, pos in [
+        for key, label, label_pos in [
             ("latitude", "lat:", lat_pos),
             ("longitude", "long:", lon_pos),
             ("altitude", "alt:", alt_pos),
+            ("speed", "spe:", spe_pos),
         ]:
             ui.add_element(
                 key,
@@ -274,68 +303,102 @@ class GPSD_ng(plugins.Plugin):
                     color=BLACK,
                     label=label,
                     value="-",
-                    position=pos,
+                    position=label_pos,
                     label_font=fonts.Small,
                     text_font=fonts.Small,
                     label_spacing=self.LABEL_SPACING,
                 ),
             )
 
-    def on_ui_update(self, ui):
-        if not self.running:
-            return
+    def lost_mode(self, ui, coords):
         with ui._lock:
-            self.ui_counter = (self.ui_counter + 1) % 5
-            coords = self.gpsd.get_position()
+            ui.set("status", "Where am I???")
+            if self.ui_counter == 1:
+                ui.set("face", "(O_o )")
+            elif self.ui_counter == 2:
+                ui.set("face", "( o_O)")
 
-            if not self.check_coords(coords):
-                ui.set("status", "Where am I???")
-                if self.ui_counter == 1:
-                    ui.set("face", "(O_o )")
-                elif self.ui_counter == 2:
-                    ui.set("face", "( o_O)")
+            if self.options["compact_view"]:
+                ui.set("coordinates", "No Data")
+            else:
+                for i in ["latitude", "longitude", "altitude", "speed"]:
+                    ui.set(i, "-")
 
-                if self.options["compact_view"]:
-                    ui.set("coordinates", "No Data")
-                else:
-                    for i in ["latitude", "longitude", "altitude"]:
-                        ui.set(i, "-")
-                return
+    @staticmethod
+    def calculate_position(coords):
+        if coords["Latitude"] < 0:
+            lat = f"{-coords['Latitude']:4.6f}S"
+        else:
+            lat = f"{coords['Latitude']:4.6f}N"
+        if coords["Longitude"] < 0:
+            long = f"{-coords['Longitude']:4.6f}W"
+        else:
+            long = f"{coords['Longitude']:4.6f}E"
 
+        alt, spd = "", ""
+        if coords["Altitude"] != None:
+            alt = f"{int(coords['Altitude'])}m"
+        if coords["Speed"] != None:
+            spd = f"{coords['Speed']:.1f}m/s"
+        return lat, long, alt, spd
+
+    def display_face(self, ui):
+        with ui._lock:
             if self.ui_counter == 1:
                 ui.set("face", "(•_• )")
             elif self.ui_counter == 2:
                 ui.set("face", "( •_•)")
 
-            if self.options["compact_view"]:
-                if self.ui_counter == 1:
-                    msg = f"{coords['Fix']} ({coords['Sats_Valid']}/{coords['Sats']} Sats)"
-                    ui.set("coordinates", msg)
-                    return
-                elif self.ui_counter == 2:
-                    ui.set("coordinates", f"GPS:{coords['Device']}")
-                    return
+    def compact_view(self, ui, coords):
+        with ui._lock:
+            if self.ui_counter == 1:
+                msg = f"{coords['Fix']} ({coords['Sats_Valid']}/{coords['Sats']} Sats)"
+                ui.set("coordinates", msg)
+                return
+            if self.ui_counter == 2:
+                dev = re.search(r"(^tcp|^udp|tty.*)", coords["Device"], re.IGNORECASE)
+                dev = dev[0] if dev else "No dev"
+                ui.set("coordinates", f"Dev:{dev}")
+                return
+            lat, long, alt, spd = self.calculate_position(coords)
+            if self.ui_counter == 3:
+                ui.set("coordinates", f"Speed:{spd} Alt:{alt}")
+                return
+            ui.set("coordinates", f"{lat},{long}")
 
-            if coords["Latitude"] < 0:
-                lat = f"{-coords['Latitude']:4.4f}S"
-            else:
-                lat = f"{coords['Latitude']:4.4f}N"
-            if coords["Longitude"] < 0:
-                long = f"{-coords['Longitude']:4.4f}W"
-            else:
-                long = f"{coords['Longitude']:4.4f}E"
+    def full_view(self, ui, coords):
+        with ui._lock:
+            lat, long, alt, spd = self.calculate_position(coords)
+            # last char is sometimes not completely drawn ¯\_(ツ)_/¯
+            # using an ending-whitespace as workaround on each line
+            ui.set("latitude", f"{lat} ")
+            ui.set("longitude", f"{long} ")
+            ui.set("altitude", f"{alt} ")
+            ui.set("speed", f"{spd} ")
 
-            if self.options["compact_view"]:
-                alt = ""
-                if coords["Altitude"] != None:
-                    alt = f" {int(coords['Altitude'])}m"
-                ui.set("coordinates", f"{lat},{long}{alt}")
-            else:
-                # last char is sometimes not completely drawn ¯\_(ツ)_/¯
-                # using an ending-whitespace as workaround on each line
-                ui.set("latitude", f"{lat} ")
-                ui.set("longitude", f"{long} ")
-                if coords["Altitude"] != None:
-                    ui.set("altitude", f"{coords['Altitude']:5.1f}m ")
-                else:
-                    ui.set("altitude", f"No data")
+    def on_ui_update(self, ui):
+        if not self.running:
+            return
+
+        self.ui_counter = (self.ui_counter + 1) % 5
+        coords = self.gpsd.get_position()
+
+        if not self.check_coords(coords):
+            self.lost_mode(ui, coords)
+            return
+
+        self.display_face(ui)
+        if self.options["compact_view"]:
+            self.compact_view(ui, coords)
+        else:
+            self.full_view(ui, coords)
+
+    def on_webhook(self, path, request):
+        from flask import make_response, redirect
+
+        coords = self.gpsd.get_position()
+        if not self.check_coords(coords):
+            return "<html><head><title>GPSD-ng: Error</title></head><body><code>No Data</code></body></html>"
+        url = f"https://www.openstreetmap.org/?mlat={coords['Latitude']}&mlon={coords['Longitude']}&zoom=18"
+        response = make_response(redirect(url, code=302))
+        return response
