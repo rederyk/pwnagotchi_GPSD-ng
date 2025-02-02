@@ -11,7 +11,7 @@ __Advantages__:
 - Non blocking access to GPS information, no deadlock, 
 - GPS hotplugin
 - Compatibility with other applications like chrony
-- Compatible with NTRIP (
+- Compatible with NTRIP/RTK/RTCM
 
 __Exemple__:\
 GPS module/dongle and/or Phone (IOS/Android) ------> GPSD ------> GPSD-ng ------> Pwnagotchi
