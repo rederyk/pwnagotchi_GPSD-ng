@@ -80,13 +80,15 @@ More info on: https://gpsd.gitlab.io/gpsd/ubxtool-examples.html#_survey_in_and_r
 
 ## UI
 The "compact_view" option show gps informations, on one line, in rotation:
-- Lat,Long (Alt) # Alt is in meters
-- Device source
+- Lat,Long
 - Fix information
+- Device source
+- Speed, (Alt) # Speed is in metters/s and Alt is in meters
+
 If the "compact_view" is not set, information are displayed like gps_more.
 
 ## Handshake
-- Set gps position to bettercap
+- Set gps position to bettercap (it's also done on internet_available)
 - Saves position informations into "gps.json" (compatible with Wigle and webgpsmap)
 
 ## Bettercap
