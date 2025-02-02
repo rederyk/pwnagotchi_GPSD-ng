@@ -11,6 +11,7 @@ __Advantages__:
 - Non blocking access to GPS information, no deadlock, 
 - GPS hotplugin
 - Compatibility with other applications like chrony
+- Compatible with NTRIP (
 
 __Exemple__:\
 GPS module/dongle and/or Phone (IOS/Android) ------> GPSD ------> GPSD-ng ------> Pwnagotchi
@@ -32,7 +33,9 @@ GPS module/dongle and/or Phone (IOS/Android) ------> GPSD ------> GPSD-ng ------
 - If you use a phone:
   - Setup bt-tether and check
   - Install a GPS app:
-    - __Android__: BlueNMEA (https://github.com/MaxKellermann/BlueNMEA not tested)
+    - __Android__(not tested):
+      - BlueNMEA: https://github.com/MaxKellermann/BlueNMEA
+      - gpsdRealay: https://github.com/project-kaat/gpsdRelay
     - __IOS__: GPS2IP (tested but paid app)
       - Set "operate in background mode"
       - Set "Connection Method" -> "Socket" -> "Port Number" -> 4352
@@ -46,6 +49,7 @@ main.plugins.gpsd.enabled = false
 main.plugins.gpsd.gpsdhost = "127.0.0.1"
 main.plugins.gpsd.gpsdport = 2947
 main.plugins.gpsd.compact_view = true
+main.plugins.gpsd.position = "127,64"
 ```
 
 # Usage
@@ -55,7 +59,25 @@ This plugin can be used for wardriving with the wigle plugin, for example.
 - __Indoor__: is the GPS module/dongle doesn't work, you can use your phone.
 
 This plugin select the most accurate (base on fix information) and most recent position.
- 
+
+## Improve positioning with RTCM
+If you have a GPs module or dongle with RTCM capabilities, you can activate with GPSD.
+Exemple with a Ublox (firmware 34.10) and GPSD 3.25:
+- ublox setup:
+  - ubxtool -p MON-VER | grep PROT  -> retreive ublox version XX.YY (34.10 for me)
+  - export UBXOPTS="-P XX.YY -v 2"
+  - ubxtool -e RTCM3
+- GPSD setup:
+  - Find a local (< 30km) RTK provider (https://rtkdata.online/network)
+  - You need host/port and mountpoint information
+  - Check with the following command. It should stream binary data.\
+curl -v -H "Ntrip-Version: Ntrip/2.0" -H "User-Agent: NTRIP theSoftware/theRevision" http://[user:pwd@]host:2101/mountpoint -o -
+  - Add "ntrip://[user:pwd@]host:2101/mountpoint" to GPSD configuration
+  - Now GPSD command should look like with ps: 'gpsd -n ntrip://caster.centipede.fr:2101/RICE -s 38400 /dev/ttyS0'
+
+Of course, you can still append your phone 'gpsd -N -D3 ntrip://caster.centipede.fr:2101/RICE -s 38400 /dev/ttyS0 tcp://172.20.10.1:4352'
+More info on: https://gpsd.gitlab.io/gpsd/ubxtool-examples.html#_survey_in_and_rtcm
+
 ## UI
 The "compact_view" option show gps informations, on one line, in rotation:
 - Lat,Long (Alt) # Alt is in meters
