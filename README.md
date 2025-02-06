@@ -23,7 +23,7 @@ GPS module/dongle and/or Phone (IOS/Android) ------> GPSD ------> GPSD-ng ------
 - Check in raspi-config -> Interface Options -> Serial Port:
   - __Disable__ Serial Port login
   - __Enable__ Serial Port 
-- Configure GPSD (/etc/default/gpsd):
+- Configure GPSD (/etc/default/gpsd) and uncomment one DEVICES:
 ```
 # Default settings for the gpsd init script and the hotplug wrapper.
 
