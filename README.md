@@ -79,7 +79,7 @@ This plugin can be used for wardriving with the wigle plugin, for example.
 
 This plugin select the most accurate (base on fix information) and most recent position.
 
-## Improve positioning with RTCM
+## Improve positioning with RTCM (need gpsd 3.25)
 If you have a GPs module or dongle with RTCM capabilities, you can activate with GPSD.
 Exemple with a Ublox (firmware 34.10) and GPSD 3.25:
 - ublox setup:
