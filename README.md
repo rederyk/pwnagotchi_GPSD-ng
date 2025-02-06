@@ -57,11 +57,18 @@ GPSD_OPTIONS="-n" # add -D3 if you need to debug
 
 # Config.toml
 ```
-main.plugins.gpsd.enabled = false
+main.plugins.gpsd.enabled = true
+
+# Options with default settings.
+# Don't add if you don't need customisation
 main.plugins.gpsd.gpsdhost = "127.0.0.1"
 main.plugins.gpsd.gpsdport = 2947
 main.plugins.gpsd.compact_view = true
 main.plugins.gpsd.position = "127,64"
+main.plugins.gpsd.lost_face_1 = "(O_o )"
+main.plugins.gpsd.lost_face_2 = "( o_O)"
+main.plugins.gpsd.face_1 = "(•_• )"
+main.plugins.gpsd.face_2 = "( •_•)"
 ```
 
 # Usage
