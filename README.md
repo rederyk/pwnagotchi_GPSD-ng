@@ -37,7 +37,7 @@ USBAUTO="false"
 # They need to be read/writeable, either by user gpsd or the group dialout.
 # DEVICES="-s BAUDRATE /dev/ttyS0" # GPS module only
 # DEVICES="tcp://PHONEIP:4352" # Phone only over BT tether
-# DEVICES="-s BAUDRATE /dev/ttyS0 tcp://192.168.44.1:4352" # GPS module + phone
+# DEVICES="-s BAUDRATE /dev/ttyS0 tcp://PHONEIP:4352" # GPS module + phone
 
 # Other options you want to pass to gpsd
 GPSD_OPTIONS="-n" # add -D3 if you need to debug
