@@ -18,20 +18,32 @@ GPS module/dongle and/or Phone (IOS/Android) ------> GPSD ------> GPSD-ng ------
 
 # Install
 - Install gpsd:
-  - "apt-get install gpsd gpsd-clients" or compile from gpsd repository
-  - Be sure to have the native gpsd python library installed
+  - "apt-get install gpsd gpsd-clients python3-gps" or compile from gpsd repository
+  - Be sure to have the native gpsd python library installed (python3-gps)
+- Check in raspi-config -> Interface Options -> Serial Port:
+  - __Disable__ Serial Port login
+  - __Enable__ Serial Port 
 - Configure GPSD (/etc/default/gpsd):
-  - __GPS module only__
-    - DEVICES="/dev/ttyS0"
-    - GPSD_OPTIONS="-n -s 38400" # check your baudrate
-  - __Phone only__
-    - DEVICES="tcp://172.20.10.1:4352"
-    - GPSD_OPTIONS="-n"
-  - __GPS module and phone__
-    - DEVICES="/dev/ttyS0"
-    - GPSD_OPTIONS="-n -s 38400 tcp://172.20.10.1:4352" # check your baudrate
+```
+# Default settings for the gpsd init script and the hotplug wrapper.
+
+# Start the gpsd daemon automatically at boot time
+START_DAEMON="true"
+
+# Use USB hotplugging to add new USB devices automatically to the daemon
+USBAUTO="false"
+
+# Devices gpsd should collect to at boot time.
+# They need to be read/writeable, either by user gpsd or the group dialout.
+# DEVICES="-s BAUDRATE /dev/ttyS0" # GPS module only
+# DEVICES="tcp://192.168.44.1:4352" # Phone only over BT tether
+# DEVICES="-s BAUDRATE /dev/ttyS0 tcp://192.168.44.1:4352" # GPS module + phone
+
+# Other options you want to pass to gpsd
+GPSD_OPTIONS="-n" # add -D3 if you need to debug
+```
 - If you use a phone:
-  - Setup bt-tether and check
+  - Setup bt-tether and check you can ping your phone
   - Install a GPS app:
     - __Android__(not tested):
       - BlueNMEA: https://github.com/MaxKellermann/BlueNMEA
@@ -72,10 +84,10 @@ Exemple with a Ublox (firmware 34.10) and GPSD 3.25:
   - You need host/port and mountpoint information
   - Check with the following command. It should stream binary data.\
 curl -v -H "Ntrip-Version: Ntrip/2.0" -H "User-Agent: NTRIP theSoftware/theRevision" http://[user:pwd@]host:2101/mountpoint -o -
-  - Add "ntrip://[user:pwd@]host:2101/mountpoint" to GPSD configuration
-  - Now GPSD command should look like with ps: 'gpsd -n ntrip://caster.centipede.fr:2101/RICE -s 38400 /dev/ttyS0'
+  - Add "ntrip://[user:pwd@]host:2101/mountpoint" to DEVICES in GPSD configuration
+  - Now GPSD command should look like with ps: 'gpsd -n ntrip://host:2101/MOUNTPOINT -s 38400 /dev/ttyS0'
 
-Of course, you can still append your phone 'gpsd -N -D3 ntrip://caster.centipede.fr:2101/RICE -s 38400 /dev/ttyS0 tcp://172.20.10.1:4352'
+Of course, you can still append your phone 'gpsd -N -D3 ntrip://host:2101/MOUNTPOINT -s 38400 /dev/ttyS0 tcp://172.20.10.1:4352'
 More info on: https://gpsd.gitlab.io/gpsd/ubxtool-examples.html#_survey_in_and_rtcm
 
 ## UI
