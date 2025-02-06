@@ -36,7 +36,7 @@ USBAUTO="false"
 # Devices gpsd should collect to at boot time.
 # They need to be read/writeable, either by user gpsd or the group dialout.
 # DEVICES="-s BAUDRATE /dev/ttyS0" # GPS module only
-# DEVICES="tcp://192.168.44.1:4352" # Phone only over BT tether
+# DEVICES="tcp://PHONEIP:4352" # Phone only over BT tether
 # DEVICES="-s BAUDRATE /dev/ttyS0 tcp://192.168.44.1:4352" # GPS module + phone
 
 # Other options you want to pass to gpsd
