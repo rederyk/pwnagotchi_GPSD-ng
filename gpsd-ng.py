@@ -62,7 +62,7 @@ class GPSD(threading.Thread):
     
     def connect(self):
         with self.lock:
-            logging.info(f"[GPSD-ng] Trying to connect")
+            logging.info(f"[GPSD-ng] Trying to connect to {self.gpsdhost}:{self.gpsdport}")
             try:
                 self.session = gps.gps(
                     host=self.gpsdhost,
@@ -70,7 +70,7 @@ class GPSD(threading.Thread):
                     mode=gps.WATCH_ENABLE | gps.WATCH_NEWSTYLE,
                 )
             except Exception as e:
-                logging.error(f"[GPSD-ng] Error updating GPS: {e}")
+                logging.error(f"[GPSD-ng] Error while connecting to GPSD: {e}")
                 self.session = None
 
     def is_old(self, date, max_seconds=90):
@@ -78,7 +78,7 @@ class GPSD(threading.Thread):
             d_time = datetime.strptime(date, self.DATE_FORMAT)
             d_time = d_time.replace(tzinfo=UTC)
         except TypeError:
-            return None
+            return False
         delta = datetime.now(tz=UTC) - d_time
         return delta.total_seconds() > max_seconds
 
@@ -127,17 +127,16 @@ class GPSD(threading.Thread):
             )
 
     def run(self):
-        logging.info(f"[GPSD-ng] Starting GPSD reading loop")
+        logging.info(f"[GPSD-ng] Starting loop")
         while self.running:
             if not self.configured:
-                time.sleep(0.1)
+                time.sleep(1)
             elif not self.session:
                 self.connect()
             elif self.session.read() == 0:
-                self.clean()
                 self.update()
             else:
-                logging.debug("[GPSD-ng] Closing connection")
+                logging.debug("[GPSD-ng] Closing connection to GPSD: {self.gpsdhost}:{self.gpsdport}")
                 self.session.close()
                 self.session = None
                 time.sleep(1)
@@ -147,9 +146,10 @@ class GPSD(threading.Thread):
         super().join(timeout)
 
     def get_position(self):
+        if not self.configured:
+            return None
+        self.clean()
         with self.lock:
-            if not self.configured:
-                return None
             # Filter devices without coords
             devices = filter(lambda x: x[1], self.devices.items())
             # Sort by best positionning and most recent
@@ -165,7 +165,7 @@ class GPSD(threading.Thread):
                 self.last_position = coords
                 return coords
             except IndexError:
-                logging.info(
+                logging.debug(
                     f"[GPSD-ng] No data, using last position: {self.last_position}"
                 )
             return self.last_position
