@@ -69,6 +69,7 @@ class GPSD(threading.Thread):
                     port=self.gpsdport,
                     mode=gps.WATCH_ENABLE | gps.WATCH_NEWSTYLE,
                 )
+                logging.info(f"[GPSD-ng] Connected to {self.gpsdhost}:{self.gpsdport}")
             except Exception as e:
                 logging.error(f"[GPSD-ng] Error while connecting to GPSD: {e}")
                 self.session = None
