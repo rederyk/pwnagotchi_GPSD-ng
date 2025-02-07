@@ -59,10 +59,12 @@ class GPSD(threading.Thread):
     @property
     def configured(self):
         return self.gpsdhost and self.gpsdport
-    
+
     def connect(self):
         with self.lock:
-            logging.info(f"[GPSD-ng] Trying to connect to {self.gpsdhost}:{self.gpsdport}")
+            logging.info(
+                f"[GPSD-ng] Trying to connect to {self.gpsdhost}:{self.gpsdport}"
+            )
             try:
                 self.session = gps.gps(
                     host=self.gpsdhost,
@@ -137,7 +139,9 @@ class GPSD(threading.Thread):
             elif self.session.read() == 0:
                 self.update()
             else:
-                logging.debug("[GPSD-ng] Closing connection to GPSD: {self.gpsdhost}:{self.gpsdport}")
+                logging.debug(
+                    "[GPSD-ng] Closing connection to GPSD: {self.gpsdhost}:{self.gpsdport}"
+                )
                 self.session.close()
                 self.session = None
                 time.sleep(1)
@@ -145,6 +149,10 @@ class GPSD(threading.Thread):
     def join(self, timeout=None):
         self.running = False
         super().join(timeout)
+
+    def get_devices(self):
+        with self.lock:
+            return list(self.devices.keys())
 
     def get_position(self):
         if not self.configured:
@@ -173,10 +181,20 @@ class GPSD(threading.Thread):
 
 
 class GPSD_ng(plugins.Plugin):
+    __name__ = "GPSD-ng"
+    __GitHub__ = ""
     __author__ = "@fmatray"
-    __version__ = "1.1.1"
+    __version__ = "1.1.2"
     __license__ = "GPL3"
     __description__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
+    __help__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
+    __dependencies__ = {
+        "apt": ["gpsd python3-gps"],
+    }
+    __defaults__ = {
+        "enabled": False,
+    }
+
     LABEL_SPACING = 0
 
     def __init__(self):
@@ -195,6 +213,8 @@ class GPSD_ng(plugins.Plugin):
             logging.info("[GPSD-ng] plugin loaded")
         except Exception as e:
             logging.error(f"[GPSD-ng] Error on loading. Trying later...")
+    
+    def on_ready(self, agent):
         try:
             logging.info(f"[GPSD-ng] Disabling bettercap's gps module")
             agent.run("gps off")
@@ -220,13 +240,8 @@ class GPSD_ng(plugins.Plugin):
         except Exception:
             pass
         with ui._lock:
-            for element in [
-                "latitude",
-                "longitude",
-                "altitude",
-                "speed",
-                "coordinates",
-            ]:
+            for element in ["latitude","longitude",
+                "altitude", "speed","coordinates"]:
                 try:
                     ui.remove_element(element)
                 except KeyError:
@@ -282,7 +297,9 @@ class GPSD_ng(plugins.Plugin):
             alt_pos = (pos[0] + 5, pos[1] + (2 * self.linespacing))
             spd_pos = (pos[0] + 5, pos[1] + (3 * self.linespacing))
         except KeyError:
-            if ui.is_waveshare_v2():
+            if (ui.is_waveshare_v2() 
+                or ui.is_waveshare_v3()
+                or ui.is_waveshare_v4()):
                 lat_pos = (127, 64)
                 lon_pos = (122, 74)
                 alt_pos = (127, 84)
@@ -307,6 +324,11 @@ class GPSD_ng(plugins.Plugin):
                 lon_pos = (122, 74)
                 alt_pos = (127, 84)
                 spd_pos = (127, 94)
+            elif ui.is_waveshare2in7():
+                lat_pos = (6, 120)
+                lon_pos = (1, 135)
+                alt_pos = (6, 150)
+                spd_pos = (1, 165)
             else:
                 lat_pos = (127, 41)
                 lon_pos = (122, 51)
@@ -371,7 +393,7 @@ class GPSD_ng(plugins.Plugin):
         else:
             long = f"{coords['Longitude']:4.6f}E"
 
-        alt, spd = "", ""
+        alt, spd = "-", "-"
         if coords["Altitude"] != None:
             alt = f"{int(coords['Altitude'])}m"
         if coords["Speed"] != None:
@@ -387,17 +409,14 @@ class GPSD_ng(plugins.Plugin):
 
     def compact_view_mode(self, ui, coords):
         with ui._lock:
-            if self.ui_counter == 1:
-                msg = f"{coords['Fix']} ({coords['Sats_Valid']}/{coords['Sats']} Sats)"
+            if self.ui_counter == 0:
+                dev = re.search(r"(^tcp|^udp|tty.*)", coords["Device"], re.IGNORECASE)
+                dev = f"{dev[0]}:" if dev else ""
+                msg = f"{dev}{coords['Fix']} ({coords['Sats_Valid']}/{coords['Sats']} Sats)"
                 ui.set("coordinates", msg)
                 return
-            if self.ui_counter == 2:
-                dev = re.search(r"(^tcp|^udp|tty.*)", coords["Device"], re.IGNORECASE)
-                dev = dev[0] if dev else "No dev"
-                ui.set("coordinates", f"Dev:{dev}")
-                return
             lat, long, alt, spd = self.calculate_position(coords)
-            if self.ui_counter == 3:
+            if self.ui_counter == 1:
                 ui.set("coordinates", f"Speed:{spd} Alt:{alt}")
                 return
             ui.set("coordinates", f"{lat},{long}")
@@ -409,8 +428,8 @@ class GPSD_ng(plugins.Plugin):
             # using an ending-whitespace as workaround on each line
             ui.set("latitude", f"{lat} ")
             ui.set("longitude", f"{long} ")
-            ui.set("altitude", f"{alt} ")
-            ui.set("speed", f"{spd} ")
+            ui.set("altitude", f"{alt}m ")
+            ui.set("speed", f"{spd}m/s ")
 
     def on_ui_update(self, ui):
         if not self.is_ready:
@@ -431,7 +450,7 @@ class GPSD_ng(plugins.Plugin):
     def on_webhook(self, path, request):
         if not self.is_ready:
             return "<html><head><title>GPSD-ng: Error</title></hexad><body><code>Plugin not ready</code></body></html>"
-        
+
         coords = self.gpsd.get_position()
         if not self.check_coords(coords):
             return "<html><head><title>GPSD-ng: Error</title></hexad><body><code>No Data</code></body></html>"
