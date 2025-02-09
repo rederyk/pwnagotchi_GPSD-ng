@@ -33,7 +33,7 @@ from flask import make_response, redirect
 
 import pwnagotchi.plugins as plugins
 import pwnagotchi.ui.fonts as fonts
-from pwnagotchi.ui.components import LabeledValue
+from pwnagotchi.ui.components import LabeledValue, Text
 from pwnagotchi.ui.view import BLACK
 
 
@@ -338,14 +338,11 @@ class GPSD_ng(plugins.Plugin):
         if self.compact_view:
             ui.add_element(
                 "coordinates",
-                LabeledValue(
-                    color=BLACK,
-                    label="coords",
+                Text(
                     value="-",
+                    color=BLACK,
                     position=lat_pos,
-                    label_font=fonts.Small,
-                    text_font=fonts.Small,
-                    label_spacing=0,
+                    font=fonts.Small,
                 ),
             )
             return
@@ -449,7 +446,7 @@ class GPSD_ng(plugins.Plugin):
 
     def on_webhook(self, path, request):
         if not self.is_ready:
-            return "<html><head><title>GPSD-ng: Error</title></hexad><body><code>Plugin not ready</code></body></html>"
+            return "<html><head><title>GPSD-ng: Error</title></head><body><code>Plugin not ready</code></body></html>"
 
         coords = self.gpsd.get_position()
         if not self.check_coords(coords):
