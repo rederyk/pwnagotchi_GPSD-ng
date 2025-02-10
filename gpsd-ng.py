@@ -126,7 +126,9 @@ class GPSD(threading.Thread):
                 Sats=len(self.session.satellites),
                 Sats_Valid=self.session.satellites_used,
                 Device=self.session.device,
-                Accuracy=self.session.fix.sep,  # Wigle plugin, we use GPS EPE
+                Accuracy=(  # Wigle plugin, we use GPS EPE
+                    self.session.fix.sep if self.session.fix.sep != float("nan") else 50
+                ),
             )
 
     def run(self):
@@ -182,7 +184,7 @@ class GPSD(threading.Thread):
 
 class GPSD_ng(plugins.Plugin):
     __name__ = "GPSD-ng"
-    __GitHub__ = ""
+    __GitHub__ = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
     __author__ = "@fmatray"
     __version__ = "1.1.4"
     __license__ = "GPL3"
@@ -213,7 +215,7 @@ class GPSD_ng(plugins.Plugin):
             logging.info("[GPSD-ng] plugin loaded")
         except Exception as e:
             logging.error(f"[GPSD-ng] Error on loading. Trying later...")
-    
+
     def on_ready(self, agent):
         try:
             logging.info(f"[GPSD-ng] Disabling bettercap's gps module")
@@ -240,8 +242,13 @@ class GPSD_ng(plugins.Plugin):
         except Exception:
             pass
         with ui._lock:
-            for element in ["latitude","longitude",
-                "altitude", "speed","coordinates"]:
+            for element in [
+                "latitude",
+                "longitude",
+                "altitude",
+                "speed",
+                "coordinates",
+            ]:
                 try:
                     ui.remove_element(element)
                 except KeyError:
@@ -297,9 +304,7 @@ class GPSD_ng(plugins.Plugin):
             alt_pos = (pos[0] + 5, pos[1] + (2 * self.linespacing))
             spd_pos = (pos[0] + 5, pos[1] + (3 * self.linespacing))
         except KeyError:
-            if (ui.is_waveshare_v2() 
-                or ui.is_waveshare_v3()
-                or ui.is_waveshare_v4()):
+            if ui.is_waveshare_v2() or ui.is_waveshare_v3() or ui.is_waveshare_v4():
                 lat_pos = (127, 64)
                 lon_pos = (122, 74)
                 alt_pos = (127, 84)
@@ -374,7 +379,7 @@ class GPSD_ng(plugins.Plugin):
                 ui.set("face", self.lost_face_2)
 
             if self.compact_view:
-                ui.set("coordinates", "No Data")
+                ui.set("coordinates", "No GPS Data")
             else:
                 for i in ["latitude", "longitude", "altitude", "speed"]:
                     ui.set(i, "-")
@@ -450,7 +455,7 @@ class GPSD_ng(plugins.Plugin):
 
         coords = self.gpsd.get_position()
         if not self.check_coords(coords):
-            return "<html><head><title>GPSD-ng: Error</title></hexad><body><code>No Data</code></body></html>"
+            return "<html><head><title>GPSD-ng: Error</title></hexad><body><code>No GPS Data</code></body></html>"
         url = f"https://www.openstreetmap.org/?mlat={coords['Latitude']}&mlon={coords['Longitude']}&zoom=18"
         response = make_response(redirect(url, code=302))
         return response
