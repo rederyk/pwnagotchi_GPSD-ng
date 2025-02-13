@@ -61,14 +61,14 @@ main.plugins.gpsd.enabled = true
 
 # Options with default settings.
 # Don't add if you don't need customisation
-main.plugins.gpsd.gpsdhost = "127.0.0.1"
-main.plugins.gpsd.gpsdport = 2947
-main.plugins.gpsd.compact_view = true
-main.plugins.gpsd.position = "127,64"
-main.plugins.gpsd.lost_face_1 = "(O_o )"
-main.plugins.gpsd.lost_face_2 = "( o_O)"
-main.plugins.gpsd.face_1 = "(•_• )"
-main.plugins.gpsd.face_2 = "( •_•)"
+main.plugins.gpsd-ng.gpsdhost = "127.0.0.1"
+main.plugins.gpsd-ng.gpsdport = 2947
+main.plugins.gpsd-ng.compact_view = true
+main.plugins.gpsd-ng.position = "127,64"
+main.plugins.gpsd-ng.lost_face_1 = "(O_o )"
+main.plugins.gpsd-ng.lost_face_2 = "( o_O)"
+main.plugins.gpsd-ng.face_1 = "(•_• )"
+main.plugins.gpsd-ng.face_2 = "( •_•)"
 ```
 
 # Usage
