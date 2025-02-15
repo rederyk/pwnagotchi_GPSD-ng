@@ -15,6 +15,7 @@
 # Don't add if you don't need customisation
 # main.plugins.gpsd.gpsdhost = "127.0.0.1"
 # main.plugins.gpsd.gpsdport = 2947
+# main.plugins.gpsd.main_device = "/dev/ttyS0" # default None
 # main.plugins.gpsd.compact_view = true
 # main.plugins.gpsd.position = "127,64"
 # main.plugins.gpsd.lost_face_1 = "(O_o )"
@@ -27,6 +28,7 @@ import json
 import logging
 import re
 import time
+import math
 from datetime import datetime, UTC
 import gps
 from flask import make_response, redirect
@@ -47,14 +49,16 @@ class GPSD(threading.Thread):
         self.gpsdport = None
         self.session = None
         self.devices = dict()
+        self.main_device = None
         self.last_position = None
         self.last_clean = datetime.now(tz=UTC)
         self.lock = threading.Lock()
         self.running = True
 
-    def configure(self, gpsdhost, gpsdport):
+    def configure(self, gpsdhost, gpsdport, main_device):
         self.gpsdhost = gpsdhost
         self.gpsdport = gpsdport
+        self.main_device = main_device
 
     @property
     def configured(self):
@@ -62,9 +66,7 @@ class GPSD(threading.Thread):
 
     def connect(self):
         with self.lock:
-            logging.info(
-                f"[GPSD-ng] Trying to connect to {self.gpsdhost}:{self.gpsdport}"
-            )
+            logging.info(f"[GPSD-ng] Trying to connect to {self.gpsdhost}:{self.gpsdport}")
             try:
                 self.session = gps.gps(
                     host=self.gpsdhost,
@@ -105,20 +107,13 @@ class GPSD(threading.Thread):
 
     def update(self):
         with self.lock:
-            if (
-                not self.session.device or self.session.fix.mode < 2
-            ):  # Remove positions without fix
+            if not self.session.device or self.session.fix.mode < 2:  # Remove positions without fix
                 return
-            logging.debug(f"[GPSD-ng] Updating data {self.session.device}")
             self.devices[self.session.device] = dict(
                 Latitude=self.session.fix.latitude,
                 Longitude=self.session.fix.longitude,
-                Altitude=(
-                    self.session.fix.altMSL if self.session.fix.mode > 2 else None
-                ),
-                Speed=(
-                    self.session.fix.speed * 0.514444
-                ),  # speed in knots converted in m/s
+                Altitude=(self.session.fix.altMSL if self.session.fix.mode == 3 else None),
+                Speed=(self.session.fix.speed * 0.514444),  # speed in knots converted in m/s
                 Date=self.session.fix.time,
                 Updated=self.session.fix.time,  # Wigle plugin
                 Mode=self.session.fix.mode,
@@ -127,7 +122,7 @@ class GPSD(threading.Thread):
                 Sats_Valid=self.session.satellites_used,
                 Device=self.session.device,
                 Accuracy=(  # Wigle plugin, we use GPS EPE
-                    self.session.fix.sep if self.session.fix.sep != float("nan") else 50
+                    50 if math.isnan(self.session.fix.sep) else self.session.fix.sep
                 ),
             )
 
@@ -157,10 +152,17 @@ class GPSD(threading.Thread):
             return list(self.devices.keys())
 
     def get_position(self):
-        if not self.configured:
+        if not (self.configured and self.devices):
             return None
         self.clean()
         with self.lock:
+            try:
+                if self.main_device and self.devices[self.main_device]:
+                    return self.devices[self.main_device]
+            except KeyError:
+                logging.error(f"[GPSD-ng] No such device: {self.main_device}")
+
+            # Fallback
             # Filter devices without coords
             devices = filter(lambda x: x[1], self.devices.items())
             # Sort by best positionning and most recent
@@ -176,9 +178,7 @@ class GPSD(threading.Thread):
                 self.last_position = coords
                 return coords
             except IndexError:
-                logging.debug(
-                    f"[GPSD-ng] No data, using last position: {self.last_position}"
-                )
+                logging.debug(f"[GPSD-ng] No data, using last position: {self.last_position}")
             return self.last_position
 
 
@@ -186,7 +186,7 @@ class GPSD_ng(plugins.Plugin):
     __name__ = "GPSD-ng"
     __GitHub__ = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
     __author__ = "@fmatray"
-    __version__ = "1.1.4"
+    __version__ = "1.1.5"
     __license__ = "GPL3"
     __description__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
     __help__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
@@ -228,13 +228,14 @@ class GPSD_ng(plugins.Plugin):
         self.compact_view = self.options.get("compact_view", False)
         self.gpsdhost = self.options.get("gpsdhost", "127.0.0.1")
         self.gpsdport = int(self.options.get("gpsdport", 2947))
+        self.main_device = self.options.get("main_device", None)
         self.position = self.options.get("position", "127,64")
         self.linespacing = int(self.options.get("linespacing", 10))
         self.lost_face_1 = self.options.get("lost_face_1", "(O_o )")
         self.lost_face_2 = self.options.get("lost_face_1", "( o_O)")
-        self.face_1 = self.options.get("lost_face_1", "(•_• )")
-        self.face_2 = self.options.get("lost_face_1", "( •_•)")
-        self.gpsd.configure(self.gpsdhost, self.gpsdport)
+        self.face_1 = self.options.get("face_1", "(•_• )")
+        self.face_2 = self.options.get("face_2", "( •_•)")
+        self.gpsd.configure(self.gpsdhost, self.gpsdport, self.main_device)
 
     def on_unload(self, ui):
         try:
@@ -372,8 +373,8 @@ class GPSD_ng(plugins.Plugin):
 
     def lost_mode(self, ui, coords):
         with ui._lock:
-            ui.set("status", "Where am I???")
             if self.ui_counter == 1:
+                ui.set("status", "Where am I???")
                 ui.set("face", self.lost_face_1)
             elif self.ui_counter == 2:
                 ui.set("face", self.lost_face_2)
@@ -424,10 +425,8 @@ class GPSD_ng(plugins.Plugin):
             ui.set("coordinates", f"{lat},{long}")
 
     def full_view_mode(self, ui, coords):
+        lat, long, alt, spd = self.calculate_position(coords)
         with ui._lock:
-            lat, long, alt, spd = self.calculate_position(coords)
-            # last char is sometimes not completely drawn ¯\_(ツ)_/¯
-            # using an ending-whitespace as workaround on each line
             ui.set("latitude", f"{lat} ")
             ui.set("longitude", f"{long} ")
             ui.set("altitude", f"{alt}m ")
