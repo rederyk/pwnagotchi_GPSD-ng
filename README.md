@@ -63,6 +63,7 @@ main.plugins.gpsd.enabled = true
 # Don't add if you don't need customisation
 main.plugins.gpsd-ng.gpsdhost = "127.0.0.1"
 main.plugins.gpsd-ng.gpsdport = 2947
+main.plugins.gpsd-ng.main_device = "/dev/ttyS0" # if not provided, the puglin will try to retreive the most accurate position
 main.plugins.gpsd-ng.compact_view = true
 main.plugins.gpsd-ng.position = "127,64"
 main.plugins.gpsd-ng.lost_face_1 = "(O_o )"
