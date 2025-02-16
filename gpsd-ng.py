@@ -9,34 +9,42 @@
 # - copy this plugin to custom plugin
 #
 # Config.toml:
-# main.plugins.gpsd.enabled = true
+# main.plugins.gpsd-ng.enabled = true
 
 # Options with default settings.
 # Don't add if you don't need customisation
-# main.plugins.gpsd.gpsdhost = "127.0.0.1"
-# main.plugins.gpsd.gpsdport = 2947
-# main.plugins.gpsd.main_device = "/dev/ttyS0" # default None
-# main.plugins.gpsd.compact_view = true
-# main.plugins.gpsd.position = "127,64"
-# main.plugins.gpsd.lost_face_1 = "(O_o )"
-# main.plugins.gpsd.lost_face_2 = "( o_O)"
-# main.plugins.gpsd.face_1 = "(•_• )"
-# main.plugins.gpsd.face_2 = "( •_•)"
+# main.plugins.gpsd-ng.gpsdhost = "127.0.0.1"
+# main.plugins.gpsd-ng.gpsdport = 2947
+# main.plugins.gpsd-ng.main_device = "/dev/ttyS0" # default None
+# main.plugins.gpsd-ng.use_open_elevation = true
+# main.plugins.gpsd-ng.save_elevations = true
+# main.plugins.gpsd-ng.compact_view = true
+# main.plugins.gpsd-ng.position = "127,64"
+# main.plugins.gpsd-ng.lost_face_1 = "(O_o )"
+# main.plugins.gpsd-ng.lost_face_2 = "( o_O)"
+# main.plugins.gpsd-ng.face_1 = "(•_• )"
+# main.plugins.gpsd-ng.face_2 = "( •_•)"
+
 
 import threading
 import json
 import logging
 import re
+import os
 import time
 import math
 from datetime import datetime, UTC
 import gps
+import json
+import geopy.distance
+import requests
 from flask import make_response, redirect
 
 import pwnagotchi.plugins as plugins
 import pwnagotchi.ui.fonts as fonts
 from pwnagotchi.ui.components import LabeledValue, Text
 from pwnagotchi.ui.view import BLACK
+from pwnagotchi.utils import StatusFile
 
 
 class GPSD(threading.Thread):
@@ -51,14 +59,21 @@ class GPSD(threading.Thread):
         self.devices = dict()
         self.main_device = None
         self.last_position = None
+        self.elevation_cache = dict()
         self.last_clean = datetime.now(tz=UTC)
+        self.elevation_report = None
+        self.last_elevation = datetime(2025, 1, 1, 0, 0, tzinfo=UTC)
         self.lock = threading.Lock()
         self.running = True
 
-    def configure(self, gpsdhost, gpsdport, main_device):
+    def configure(self, gpsdhost, gpsdport, main_device, cache_file, save_elevations):
         self.gpsdhost = gpsdhost
         self.gpsdport = gpsdport
         self.main_device = main_device
+        if save_elevations:
+            self.elevation_report = StatusFile(cache_file, data_format="json")
+            self.elevation_cache = self.elevation_report.data_field_or("elevations", default=dict())
+        logging.info(f"[GPSD-ng] {len(self.elevation_cache)} locations already in cache")
 
     @property
     def configured(self):
@@ -109,10 +124,18 @@ class GPSD(threading.Thread):
         with self.lock:
             if not self.session.device or self.session.fix.mode < 2:  # Remove positions without fix
                 return
+            if self.session.fix.mode == 3 and not math.isnan(self.session.fix.altMSL):
+                altitude = self.session.fix.altMSL
+                self.cache_elevation(
+                    self.session.fix.latitude, self.session.fix.longitude, altitude
+                )
+            else:
+                altitude = self.get_elevation(self.session.fix.latitude, self.session.fix.longitude)
+
             self.devices[self.session.device] = dict(
                 Latitude=self.session.fix.latitude,
                 Longitude=self.session.fix.longitude,
-                Altitude=(self.session.fix.altMSL if self.session.fix.mode == 3 else None),
+                Altitude=altitude,
                 Speed=(self.session.fix.speed * 0.514444),  # speed in knots converted in m/s
                 Date=self.session.fix.time,
                 Updated=self.session.fix.time,  # Wigle plugin
@@ -181,12 +204,87 @@ class GPSD(threading.Thread):
                 logging.debug(f"[GPSD-ng] No data, using last position: {self.last_position}")
             return self.last_position
 
+    @staticmethod
+    def round_position(latitude, longitude):
+        return (round(latitude, 4), round(longitude, 4))
+
+    def elevation_key(self, latitude, longitude):
+        return str(self.round_position(latitude, longitude))
+
+    def cache_elevation(self, latitude, longitude, elevation):
+        key = self.elevation_key(latitude, longitude)
+        self.elevation_cache[key] = elevation
+
+    def get_elevation(self, latitude, longitude):
+        key = self.elevation_key(latitude, longitude)
+        try:
+            return self.elevation_cache[key]
+        except KeyError:
+            return None
+
+    def save_elevation_cache(self):
+        if self.elevation_report:
+            self.elevation_report.update(data={"elevations": self.elevation_cache})
+
+    def calculate_locations(self, max_dist=100):
+        locations = list()
+
+        def append_location(latitude, longitude):
+            if not self.elevation_key(latitude, longitude) in self.elevation_cache:
+                lat, long = self.round_position(latitude, longitude)
+                locations.append({"latitude": lat, "longitude": long})
+
+        if not (coords := self.get_position()):
+            return None
+        if coords["Mode"] != 2:  # No cache if we have a good Fix
+            return
+        append_location(coords["Latitude"], coords["Longitude"])
+        center = self.round_position(coords["Latitude"], coords["Longitude"])
+        for dist in range(10, max_dist + 1, 10):
+            for degree in range(0, 360):
+                point = geopy.distance.distance(meters=dist).destination(center, bearing=degree)
+                append_location(point.latitude, point.longitude)
+        seen = []
+        return [l for l in locations if l not in seen and not seen.append(l)]  # remove duplicates
+
+    def update_cache_elevation(self):
+        if not (
+            self.configured and (datetime.now(tz=UTC) - self.last_elevation).total_seconds() > 60
+        ):
+            return
+        self.last_elevation = datetime.now(tz=UTC)
+        logging.info(f"[GPSD-ng] Running elevation cache: {len(self.elevation_cache)} available")
+
+        if not (locations := self.calculate_locations()):
+            return
+        logging.info(f"[GPSD-ng] Trying to cache {len(locations)} locations")
+        try:
+            logging.info("[GPSD-ng] let's request")
+            res = requests.post(
+                url="https://api.open-elevation.com/api/v1/lookup",
+                headers={"Accept": "application/json", "content-type": "application/json"},
+                data=json.dumps(dict(locations=locations)),
+                timeout=10,
+            )
+            if not res.status_code == 200:
+                logging.error(
+                    f"[GPSD-ng] Error with open-elevation: {res.reason}({res.status_code})"
+                )
+                return
+            with self.lock:
+                for item in res.json()["results"]:
+                    self.cache_elevation(item["latitude"], item["longitude"], item["elevation"])
+                self.save_elevation_cache()
+            logging.info(f"[GPSD-ng] {len(self.elevation_cache)} elevations in cache")
+        except Exception as e:
+            logging.error(f"[GPSD-ng] Error with open-elevation: {e}")
+
 
 class GPSD_ng(plugins.Plugin):
     __name__ = "GPSD-ng"
     __GitHub__ = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
     __author__ = "@fmatray"
-    __version__ = "1.1.5"
+    __version__ = "1.2.0"
     __license__ = "GPL3"
     __description__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
     __help__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
@@ -229,13 +327,22 @@ class GPSD_ng(plugins.Plugin):
         self.gpsdhost = self.options.get("gpsdhost", "127.0.0.1")
         self.gpsdport = int(self.options.get("gpsdport", 2947))
         self.main_device = self.options.get("main_device", None)
+        self.use_open_elevation = self.options.get("use_open_elevation", True)
+        self.save_elevations = self.options.get("save_elevations", True)
         self.position = self.options.get("position", "127,64")
         self.linespacing = int(self.options.get("linespacing", 10))
         self.lost_face_1 = self.options.get("lost_face_1", "(O_o )")
         self.lost_face_2 = self.options.get("lost_face_1", "( o_O)")
         self.face_1 = self.options.get("face_1", "(•_• )")
         self.face_2 = self.options.get("face_2", "( •_•)")
-        self.gpsd.configure(self.gpsdhost, self.gpsdport, self.main_device)
+        handshake_dir = config["bettercap"].get("handshakes")
+        self.gpsd.configure(
+            self.gpsdhost,
+            self.gpsdport,
+            self.main_device,
+            os.path.join(handshake_dir, ".elevations"),
+            self.save_elevations,
+        )
 
     def on_unload(self, ui):
         try:
@@ -266,6 +373,8 @@ class GPSD_ng(plugins.Plugin):
     def on_internet_available(self, agent):
         if not self.is_ready:
             return
+        if self.use_open_elevation:
+            self.gpsd.update_cache_elevation()
         coords = self.gpsd.get_position()
         if not self.check_coords(coords):
             return

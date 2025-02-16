@@ -52,6 +52,7 @@ GPSD_OPTIONS="-n" # add -D3 if you need to debug
       - Set "operate in background mode"
       - Set "Connection Method" -> "Socket" -> "Port Number" -> 4352
       - Set "Network selection" -> "Hotspot"
+    - Both cases activate GGA messages to have "3D fix"
 - Check your gpsd configuration with gpsmon or cgps
 - Copy gpsd-ng.py into your custom plugin directory and configure
 
@@ -64,7 +65,9 @@ main.plugins.gpsd.enabled = true
 main.plugins.gpsd-ng.gpsdhost = "127.0.0.1"
 main.plugins.gpsd-ng.gpsdport = 2947
 main.plugins.gpsd-ng.main_device = "/dev/ttyS0" # if not provided, the puglin will try to retreive the most accurate position
-main.plugins.gpsd-ng.compact_view = true
+main.plugins.gpsd-ng.use_open_elevation = true # if true, use open-elevation API to retreive missing altitudes. Use it if you have a poor GPS signal.
+main.plugins.gpsd-ng.save_elevations = true # if true, elevations cache will be saved to disk. Be carefull as it can grow fast if move a lot.
+main.plugins.gpsd-ng.compact_view = true # One line display with many many infos
 main.plugins.gpsd-ng.position = "127,64"
 main.plugins.gpsd-ng.lost_face_1 = "(O_o )"
 main.plugins.gpsd-ng.lost_face_2 = "( o_O)"
@@ -79,6 +82,9 @@ This plugin can be used for wardriving with the wigle plugin, for example.
 - __Indoor__: is the GPS module/dongle doesn't work, you can use your phone.
 
 This plugin select the most accurate (base on fix information) and most recent position.
+
+If the device can only get 2D positions for some reason (poor signal, wrong device orientation, bad luck, etc.), the plugin can use open-elevation API to try to ask current altitude.
+To avoid many call to the API, each request asks for points every ~10m around you, in a diameter of 200m. This cache can be saved to disk.
 
 ## Improve positioning with RTCM (need gpsd 3.25)
 If you have a GPs module or dongle with RTCM capabilities, you can activate with GPSD.
