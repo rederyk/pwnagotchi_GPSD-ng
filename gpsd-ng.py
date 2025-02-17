@@ -18,7 +18,9 @@
 # main.plugins.gpsd-ng.main_device = "/dev/ttyS0" # default None
 # main.plugins.gpsd-ng.use_open_elevation = true
 # main.plugins.gpsd-ng.save_elevations = true
-# main.plugins.gpsd-ng.compact_view = true
+# main.plugins.gpsd-ng.view_mode = "compact" # "compact", "full", "none"
+# main.plugins.gpsd-ng.fields = "info,speed,altitude" # list or string of fields to display
+# main.plugins.gpsd-ng.units = "metric" # "metric", "imperial"
 # main.plugins.gpsd-ng.position = "127,64"
 # main.plugins.gpsd-ng.lost_face_1 = "(O_o )"
 # main.plugins.gpsd-ng.lost_face_2 = "( o_O)"
@@ -37,6 +39,7 @@ from datetime import datetime, UTC
 import gps
 import json
 import geopy.distance
+import geopy.units
 import requests
 from flask import make_response, redirect
 
@@ -284,7 +287,7 @@ class GPSD_ng(plugins.Plugin):
     __name__ = "GPSD-ng"
     __GitHub__ = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
     __author__ = "@fmatray"
-    __version__ = "1.2.1"
+    __version__ = "1.3.0"
     __license__ = "GPL3"
     __description__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
     __help__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
@@ -296,6 +299,7 @@ class GPSD_ng(plugins.Plugin):
     }
 
     LABEL_SPACING = 0
+    FIELDS = ["info", "altitude", "speed"]
 
     def __init__(self):
         self.gpsd = None
@@ -323,12 +327,36 @@ class GPSD_ng(plugins.Plugin):
 
     def on_config_changed(self, config):
         logging.info("[GPSD-ng] Reading config")
-        self.compact_view = self.options.get("compact_view", False)
+
+        self.view_mode = self.options.get("view_mode", "compact").lower()
+        if not self.view_mode in ["compact", "full", "none"]:
+            logging.error(f"[GPSD-ng] Wrong setting for view_mode: {self.view_mode}. Using compact")
+            self.view_mode = "compact"
+        self.fields = self.options.get("fields", self.FIELDS)
+        if isinstance(self.fields, str):
+            self.fields = self.fields.split(",")
+        if not isinstance(self.fields, list):
+            logging.error(f"[GPSD-ng] Wrong setting for fields: must be a list. Using default")
+            self.fields = self.FIELDS
+        else:
+            self.fields = [i.strip() for i in self.fields]
+            for field in self.fields:
+                if not field in self.fields:
+                    logging.error(f"[GPSD-ng] Wrong setting for fields: {field}.")
+        if "longitude" not in self.fields:
+            self.fields.insert(0, "longitude")
+        if "latitude" not in self.fields:
+            self.fields.insert(0, "latitude")
+
         self.gpsdhost = self.options.get("gpsdhost", "127.0.0.1")
         self.gpsdport = int(self.options.get("gpsdport", 2947))
         self.main_device = self.options.get("main_device", None)
         self.use_open_elevation = self.options.get("use_open_elevation", True)
         self.save_elevations = self.options.get("save_elevations", True)
+        self.units = self.options.get("units", "metric").lower()
+        if not self.units in ["metric", "imperial"]:
+            logging.error(f"[GPSD-ng] Wrong setting for units: {self.units}. Using metric")
+            self.units = "metric"
         self.position = self.options.get("position", "127,64")
         self.linespacing = int(self.options.get("linespacing", 10))
         self.lost_face_1 = self.options.get("lost_face_1", "(O_o )")
@@ -355,7 +383,7 @@ class GPSD_ng(plugins.Plugin):
                 "longitude",
                 "altitude",
                 "speed",
-                "coordinates",
+                "gps",
             ]:
                 try:
                     ui.remove_element(element)
@@ -405,6 +433,8 @@ class GPSD_ng(plugins.Plugin):
             logging.error(f"[GPSD-ng] Error on saving gps coordinates: {e}")
 
     def on_ui_setup(self, ui):
+        if self.view_mode == "none":
+            return
         try:
             pos = self.position.split(",")
             pos = [int(x.strip()) for x in pos]
@@ -449,35 +479,39 @@ class GPSD_ng(plugins.Plugin):
                 alt_pos = (127, 61)
                 spd_pos = (127, 71)
 
-        if self.compact_view:
-            ui.add_element(
-                "coordinates",
-                Text(
-                    value="-",
-                    color=BLACK,
-                    position=lat_pos,
-                    font=fonts.Small,
-                ),
-            )
-            return
-        for key, label, label_pos in [
-            ("latitude", "lat:", lat_pos),
-            ("longitude", "long:", lon_pos),
-            ("altitude", "alt:", alt_pos),
-            ("speed", "spd:", spd_pos),
-        ]:
-            ui.add_element(
-                key,
-                LabeledValue(
-                    color=BLACK,
-                    label=label,
-                    value="-",
-                    position=label_pos,
-                    label_font=fonts.Small,
-                    text_font=fonts.Small,
-                    label_spacing=self.LABEL_SPACING,
-                ),
-            )
+        match self.view_mode:
+            case "compact":
+                ui.add_element(
+                    "gps",
+                    Text(
+                        value="Waiting for GPS",
+                        color=BLACK,
+                        position=lat_pos,
+                        font=fonts.Small,
+                    ),
+                )
+            case "full":
+                for key, label, label_pos in [
+                    ("latitude", "lat:", lat_pos),
+                    ("longitude", "long:", lon_pos),
+                    ("altitude", "alt:", alt_pos),
+                    ("speed", "spd:", spd_pos),
+                ]:
+                    if key in self.fields:
+                        ui.add_element(
+                            key,
+                            LabeledValue(
+                                color=BLACK,
+                                label=label,
+                                value="-",
+                                position=label_pos,
+                                label_font=fonts.Small,
+                                text_font=fonts.Small,
+                                label_spacing=self.LABEL_SPACING,
+                            ),
+                        )
+            case _:
+                pass
 
     def lost_mode(self, ui, coords):
         with ui._lock:
@@ -487,14 +521,23 @@ class GPSD_ng(plugins.Plugin):
             elif self.ui_counter == 2:
                 ui.set("face", self.lost_face_2)
 
-            if self.compact_view:
-                ui.set("coordinates", "No GPS Data")
-            else:
-                for i in ["latitude", "longitude", "altitude", "speed"]:
-                    ui.set(i, "-")
+            match self.view_mode:
+                case "compact":
+                    ui.set("gps", "No GPS Data")
+                case "full":
+                    for i in ["latitude", "longitude", "altitude", "speed"]:
+                        try:
+                            ui.set(i, "-")
+                        except KeyError:
+                            pass
+                case _:
+                    pass
 
-    @staticmethod
-    def calculate_position(coords):
+    def calculate_position(self, coords):
+        dev = re.search(r"(^tcp|^udp|tty.*)", coords["Device"], re.IGNORECASE)
+        dev = f"{dev[0]}:" if dev else ""
+        info = f"{dev}{coords['Fix']} ({coords['Sats_Valid']}/{coords['Sats']} Sats)"
+
         if coords["Latitude"] < 0:
             lat = f"{-coords['Latitude']:4.6f}S"
         else:
@@ -506,10 +549,16 @@ class GPSD_ng(plugins.Plugin):
 
         alt, spd = "-", "-"
         if coords["Altitude"] != None:
-            alt = f"{int(coords['Altitude'])}m"
+            if self.units == "metric":
+                alt = f"{round(coords['Altitude'])}m"
+            else:
+                alt = f"{round(geopy.units.feet(meters=coords['Altitude']))}ft"
         if coords["Speed"] != None:
-            spd = f"{coords['Speed']:.1f}m/s"
-        return lat, long, alt, spd
+            if self.units == "metric":
+                spd = f"{coords['Speed']:.1f}m/s"
+            else:
+                spd = f"{round(geopy.units.feet(meters=coords['Speed']))}ft/s"
+        return info, lat, long, alt, spd
 
     def display_face(self, ui):
         with ui._lock:
@@ -520,29 +569,35 @@ class GPSD_ng(plugins.Plugin):
 
     def compact_view_mode(self, ui, coords):
         with ui._lock:
-            if self.ui_counter == 0:
-                dev = re.search(r"(^tcp|^udp|tty.*)", coords["Device"], re.IGNORECASE)
-                dev = f"{dev[0]}:" if dev else ""
-                msg = f"{dev}{coords['Fix']} ({coords['Sats_Valid']}/{coords['Sats']} Sats)"
-                ui.set("coordinates", msg)
+            info, lat, long, alt, spd = self.calculate_position(coords)
+            if self.ui_counter == 0 and "info" in self.fields:
+                ui.set("gps", info)
                 return
-            lat, long, alt, spd = self.calculate_position(coords)
             if self.ui_counter == 1:
-                ui.set("coordinates", f"Speed:{spd} Alt:{alt}")
-                return
-            ui.set("coordinates", f"{lat},{long}")
+                msg = []
+                if "speed" in self.fields:
+                    msg.append(f"Spd:{spd}")
+                if "altitude" in self.fields:
+                    msg.append(f"Alt:{alt}")
+                if msg:
+                    ui.set("gps", " ".join(msg))
+                    return
+            ui.set("gps", f"{lat},{long}")
 
     def full_view_mode(self, ui, coords):
-        lat, long, alt, spd = self.calculate_position(coords)
+        _, lat, long, alt, spd = self.calculate_position(coords)
         with ui._lock:
             ui.set("latitude", f"{lat} ")
             ui.set("longitude", f"{long} ")
-            ui.set("altitude", f"{alt}m ")
-            ui.set("speed", f"{spd}m/s ")
+            if "altitude" in self.fields:
+                ui.set("altitude", f"{alt} ")
+            if "speed" in self.fields:
+                ui.set("speed", f"{spd} ")
 
     def on_ui_update(self, ui):
-        if not self.is_ready:
+        if not self.is_ready or self.view_mode == "none":
             return
+
         self.ui_counter = (self.ui_counter + 1) % 5
         coords = self.gpsd.get_position()
 
@@ -551,10 +606,13 @@ class GPSD_ng(plugins.Plugin):
             return
 
         self.display_face(ui)
-        if self.compact_view:
-            self.compact_view_mode(ui, coords)
-        else:
-            self.full_view_mode(ui, coords)
+        match self.view_mode:
+            case "compact":
+                self.compact_view_mode(ui, coords)
+            case "full":
+                self.full_view_mode(ui, coords)
+            case _:
+                pass
 
     def on_webhook(self, path, request):
         if not self.is_ready:

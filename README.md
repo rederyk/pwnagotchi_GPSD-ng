@@ -67,7 +67,9 @@ main.plugins.gpsd-ng.gpsdport = 2947
 main.plugins.gpsd-ng.main_device = "/dev/ttyS0" # if not provided, the puglin will try to retreive the most accurate position
 main.plugins.gpsd-ng.use_open_elevation = true # if true, use open-elevation API to retreive missing altitudes. Use it if you have a poor GPS signal.
 main.plugins.gpsd-ng.save_elevations = true # if true, elevations cache will be saved to disk. Be carefull as it can grow fast if move a lot.
-main.plugins.gpsd-ng.compact_view = true # One line display with many many infos
+main.plugins.gpsd-ng.view_mode = "compact" # "compact", "full", "none" 
+main.plugins.gpsd-ng.fields = "info,speed,altitude" # list or string of fields to display
+main.plugins.gpsd-ng.units = "metric" # "metric", "imperial"
 main.plugins.gpsd-ng.position = "127,64"
 main.plugins.gpsd-ng.lost_face_1 = "(O_o )"
 main.plugins.gpsd-ng.lost_face_2 = "( o_O)"
@@ -104,14 +106,25 @@ curl -v -H "Ntrip-Version: Ntrip/2.0" -H "User-Agent: NTRIP theSoftware/theRevis
 Of course, you can still append your phone 'gpsd -N -D3 ntrip://host:2101/MOUNTPOINT -s 38400 /dev/ttyS0 tcp://172.20.10.1:4352'
 More info on: https://gpsd.gitlab.io/gpsd/ubxtool-examples.html#_survey_in_and_rtcm
 
-## UI
-The "compact_view" option show gps informations, on one line, in rotation:
-- Lat,Long
-- Fix information
-- Device source
-- Speed, (Alt) # Speed is in metters/s and Alt is in meters
+## UI views
+The "compact" view mode (default) option show gps informations, on one line, in rotation:
+- Latitude,Longitude
+- Info: Device source + Fix information
+- Speed, Altitude
 
-If the "compact_view" is not set, information are displayed like gps_more.
+If you prefer a more traditionnal view, use "full" mode:
+- Latitude
+- Longitude
+- Altitude
+- Speed
+
+You can show or not with the fields option. by default, it will display all.
+If you want a clear display, use "none", nothing will be display.
+
+# Units
+You can use metric or imperial units for altitude(m or ft) and speed (m/s or ft/s).
+This only changes on display, not gps.json files, as Wigle needs metric units. 
+Default is metric because it's the International System. 
 
 ## Handshake
 - Set gps position to bettercap (it's also done on internet_available)
