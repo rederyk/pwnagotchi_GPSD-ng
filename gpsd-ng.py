@@ -284,7 +284,7 @@ class GPSD_ng(plugins.Plugin):
     __name__ = "GPSD-ng"
     __GitHub__ = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
     __author__ = "@fmatray"
-    __version__ = "1.2.0"
+    __version__ = "1.2.1"
     __license__ = "GPL3"
     __description__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
     __help__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
@@ -387,7 +387,6 @@ class GPSD_ng(plugins.Plugin):
         if not self.is_ready:
             return
         coords = self.gpsd.get_position()
-        logging.info(f"[GPSD-ng] Coordinates: {coords}")
         if not self.check_coords(coords):
             logging.info("[GPSD-ng] not saving GPS: no fix")
             return
