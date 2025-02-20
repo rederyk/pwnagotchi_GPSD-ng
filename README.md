@@ -18,7 +18,7 @@ GPS module/dongle and/or Phone (IOS/Android) ------> GPSD ------> GPSD-ng ------
 
 # Install
 - Install gpsd:
-  - "apt-get install gpsd gpsd-clients python3-gps" or compile from gpsd repository
+  - "apt-get install gpsd gpsd-clients python3-gps python3-geopy" or compile from gpsd repository
   - Be sure to have the native gpsd python library installed (python3-gps)
 - Check in raspi-config -> Interface Options -> Serial Port:
   - __Disable__ Serial Port login
