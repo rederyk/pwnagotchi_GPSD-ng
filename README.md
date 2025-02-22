@@ -83,11 +83,10 @@ This plugin can be used for wardriving with the wigle plugin, for example.
 - __Outdoor__: GPS module/dongle works fine. 
 - __Indoor__: is the GPS module/dongle doesn't work, you can use your phone.
 
-This plugin select the most accurate (base on fix information) and most recent position.
+If main_device is not set (default), the device with the most accurate (base on fix information) and most recent position, will be selected.
 
-If main_device is set, the plugin will use that main device position, if available. 
+If main_device is set, the plugin will use that main device position, if available.  
 If the main device is not available, it will fallback to other devices.
-
 
 If the device can only get 2D positions for some reason (poor signal, wrong device orientation, bad luck, etc.), the plugin can use open-elevation API to try to ask current altitude.
 To avoid many call to the API, each request asks for points every ~10m around you, in a diameter of 200m. This cache can be saved to disk.
