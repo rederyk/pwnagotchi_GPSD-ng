@@ -17,6 +17,7 @@ __Exemple__:\
 GPS module/dongle and/or Phone (IOS/Android) ------> GPSD ------> GPSD-ng ------> Pwnagotchi
 
 # Install
+- Copy gpsd-ng.py and gpsd-ng.html to your custom plugins directory
 - Install gpsd:
   - "apt-get install gpsd gpsd-clients python3-gps python3-geopy" or compile from gpsd repository
   - Be sure to have the native gpsd python library installed (python3-gps)
@@ -71,6 +72,7 @@ main.plugins.gpsd-ng.view_mode = "compact" # "compact", "full", "none"
 main.plugins.gpsd-ng.fields = "info,speed,altitude" # list or string of fields to display
 main.plugins.gpsd-ng.units = "metric" # "metric", "imperial"
 main.plugins.gpsd-ng.position = "127,64"
+main.plugins.gpsd-ng.show_faces = true # if false, doesn't show face. Ex if you use PNG faces
 main.plugins.gpsd-ng.lost_face_1 = "(O_o )"
 main.plugins.gpsd-ng.lost_face_2 = "( o_O)"
 main.plugins.gpsd-ng.face_1 = "(•_• )"
