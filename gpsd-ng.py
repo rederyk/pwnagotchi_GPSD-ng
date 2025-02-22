@@ -22,6 +22,7 @@
 # main.plugins.gpsd-ng.fields = "info,speed,altitude" # list or string of fields to display
 # main.plugins.gpsd-ng.units = "metric" # "metric", "imperial"
 # main.plugins.gpsd-ng.position = "127,64"
+# main.plugins.gpsd-ng.show_faces = true # if false, doesn't show face. Ex if you use PNG faces
 # main.plugins.gpsd-ng.lost_face_1 = "(O_o )"
 # main.plugins.gpsd-ng.lost_face_2 = "( o_O)"
 # main.plugins.gpsd-ng.face_1 = "(•_• )"
@@ -41,7 +42,7 @@ import json
 import geopy.distance
 import geopy.units
 import requests
-from flask import make_response, redirect
+from flask import render_template_string
 
 import pwnagotchi.plugins as plugins
 import pwnagotchi.ui.fonts as fonts
@@ -135,6 +136,10 @@ class GPSD(threading.Thread):
             else:
                 altitude = self.get_elevation(self.session.fix.latitude, self.session.fix.longitude)
 
+            if math.isnan(self.session.fix.sep):
+                accuracy = 50
+            else:
+                accuracy = self.session.fix.sep
             self.devices[self.session.device] = dict(
                 Latitude=self.session.fix.latitude,
                 Longitude=self.session.fix.longitude,
@@ -147,9 +152,7 @@ class GPSD(threading.Thread):
                 Sats=len(self.session.satellites),
                 Sats_Valid=self.session.satellites_used,
                 Device=self.session.device,
-                Accuracy=(  # Wigle plugin, we use GPS EPE
-                    50 if math.isnan(self.session.fix.sep) else self.session.fix.sep
-                ),
+                Accuracy=accuracy,
             )
 
     def run(self):
@@ -287,7 +290,7 @@ class GPSD_ng(plugins.Plugin):
     __name__ = "GPSD-ng"
     __GitHub__ = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
     __author__ = "@fmatray"
-    __version__ = "1.3.0"
+    __version__ = "1.3.1"
     __license__ = "GPL3"
     __description__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
     __help__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
@@ -359,6 +362,7 @@ class GPSD_ng(plugins.Plugin):
             self.units = "metric"
         self.position = self.options.get("position", "127,64")
         self.linespacing = int(self.options.get("linespacing", 10))
+        self.show_faces = self.options.get("show_faces", True)
         self.lost_face_1 = self.options.get("lost_face_1", "(O_o )")
         self.lost_face_2 = self.options.get("lost_face_1", "( o_O)")
         self.face_1 = self.options.get("face_1", "(•_• )")
@@ -513,13 +517,17 @@ class GPSD_ng(plugins.Plugin):
             case _:
                 pass
 
+    def set_face(self, ui, face):
+        if self.show_faces and face:
+            ui.set("face", face)
+
     def lost_mode(self, ui, coords):
         with ui._lock:
             if self.ui_counter == 1:
                 ui.set("status", "Where am I???")
-                ui.set("face", self.lost_face_1)
+                self.set_face(ui, self.lost_face_1)
             elif self.ui_counter == 2:
-                ui.set("face", self.lost_face_2)
+                self.set_face(ui, self.lost_face_2)
 
             match self.view_mode:
                 case "compact":
@@ -563,9 +571,9 @@ class GPSD_ng(plugins.Plugin):
     def display_face(self, ui):
         with ui._lock:
             if self.ui_counter == 1:
-                ui.set("face", self.face_1)
+                self.set_face(ui, self.face_1)
             elif self.ui_counter == 2:
-                ui.set("face", self.face_2)
+                self.set_face(ui, self.face_2)
 
     def compact_view_mode(self, ui, coords):
         with ui._lock:
@@ -621,6 +629,9 @@ class GPSD_ng(plugins.Plugin):
         coords = self.gpsd.get_position()
         if not self.check_coords(coords):
             return "<html><head><title>GPSD-ng: Error</title></hexad><body><code>No GPS Data</code></body></html>"
-        url = f"https://www.openstreetmap.org/?mlat={coords['Latitude']}&mlon={coords['Longitude']}&zoom=18"
-        response = make_response(redirect(url, code=302))
-        return response
+        template_file = os.path.dirname(os.path.realpath(__file__)) + "/" + "gpsd-ng.html"
+        try:
+            with open(template_file, "r") as fb:
+                return render_template_string(fb.read(), devices=self.gpsd.devices)
+        except Exception as e:
+            logging.error(f"[GPSD-ng] Error while rendering template: {e}")
