@@ -21,6 +21,7 @@
 # main.plugins.gpsd-ng.view_mode = "compact" # "compact", "full", "none"
 # main.plugins.gpsd-ng.fields = "info,speed,altitude" # list or string of fields to display
 # main.plugins.gpsd-ng.units = "metric" # "metric", "imperial"
+# main.plugins.gpsd-ng.display_precision = 6 # display precision for latitude and longitude
 # main.plugins.gpsd-ng.position = "127,64"
 # main.plugins.gpsd-ng.show_faces = true # if false, doesn't show face. Ex if you use PNG faces
 # main.plugins.gpsd-ng.lost_face_1 = "(O_o )"
@@ -290,7 +291,7 @@ class GPSD_ng(plugins.Plugin):
     __name__ = "GPSD-ng"
     __GitHub__ = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
     __author__ = "@fmatray"
-    __version__ = "1.3.1"
+    __version__ = "1.4.0"
     __license__ = "GPL3"
     __description__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
     __help__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
@@ -360,6 +361,7 @@ class GPSD_ng(plugins.Plugin):
         if not self.units in ["metric", "imperial"]:
             logging.error(f"[GPSD-ng] Wrong setting for units: {self.units}. Using metric")
             self.units = "metric"
+        self.diplay_precision = int(self.options.get("diplay_precision", 6))
         self.position = self.options.get("position", "127,64")
         self.linespacing = int(self.options.get("linespacing", 10))
         self.show_faces = self.options.get("show_faces", True)
@@ -367,12 +369,12 @@ class GPSD_ng(plugins.Plugin):
         self.lost_face_2 = self.options.get("lost_face_1", "( o_O)")
         self.face_1 = self.options.get("face_1", "(•_• )")
         self.face_2 = self.options.get("face_2", "( •_•)")
-        handshake_dir = config["bettercap"].get("handshakes")
+        self.handshake_dir = config["bettercap"].get("handshakes")
         self.gpsd.configure(
             self.gpsdhost,
             self.gpsdport,
             self.main_device,
-            os.path.join(handshake_dir, ".elevations"),
+            os.path.join(self.handshake_dir, ".elevations"),
             self.save_elevations,
         )
 
@@ -400,20 +402,60 @@ class GPSD_ng(plugins.Plugin):
             [coords["Latitude"], coords["Longitude"]]
         )
 
-    # on_internet_available() is used to update GPS to bettercap.
-    # Not ideal but I can't find another function to do it.
+    def update_bettercap_gps(self, agent, coords):
+        try:
+            agent.run(f"set gps.set {coords['Latitude']} {coords['Longitude']}")
+        except Exception as e:
+            logging.error(f"[GPSD-ng] Cannot set bettercap GPS: {e}")
+
     def on_internet_available(self, agent):
         if not self.is_ready:
             return
         if self.use_open_elevation:
             self.gpsd.update_cache_elevation()
+
         coords = self.gpsd.get_position()
         if not self.check_coords(coords):
             return
+        self.update_bettercap_gps(agent, coords)
+
+    def save_gps_file(self, gps_filename, coords):
+        logging.info(f"[GPSD-ng] Saving GPS to {gps_filename}")
         try:
-            agent.run(f"set gps.set {coords['Latitude']} {coords['Longitude']}")
+            with open(gps_filename, "w+t") as fp:
+                json.dump(coords, fp)
         except Exception as e:
-            logging.error(f"[GPSD-ng] Cannot set bettercap GPS: {e}")
+            logging.error(f"[GPSD-ng] Error on saving gps coordinates: {e}")
+
+    def on_unfiltered_ap_list(self, agent, aps):
+        if not self.is_ready:
+            return
+        coords = self.gpsd.get_position()
+        if not self.check_coords(coords):
+            return
+        self.update_bettercap_gps(agent, coords)
+        for ap in aps:  # Complete pcap files with missing gps.json
+            try:
+                mac = ap["mac"].replace(":", "")
+                hostname = re.sub(r"[^a-zA-Z0-9]", "", ap["hostname"])
+            except KeyError:
+                continue
+
+            pcap_filename = os.path.join(self.handshake_dir, f"{hostname}_{mac}.pcap")
+            if not os.path.exists(pcap_filename):  # Pcap file doesn't exist => next
+                continue
+
+            gps_filename = os.path.join(self.handshake_dir, f"{hostname}_{mac}.gps.json")
+            # gps.json exist with size>0 => next
+            if os.path.exists(gps_filename) and os.path.getsize(gps_filename):
+                continue
+
+            geo_filename = os.path.join(self.handshake_dir, f"{hostname}_{mac}.geo.json")
+            # geo.json exist with size>0 => next
+            if os.path.exists(geo_filename) and os.path.getsize(geo_filename):
+                continue
+            logging.info(f"[GPSD-ng] Found pcap without gps file {os.path.basename(pcap_filename)}")
+            self.save_gps_file(gps_filename, coords)
 
     def on_handshake(self, agent, filename, access_point, client_station):
         if not self.is_ready:
@@ -422,19 +464,8 @@ class GPSD_ng(plugins.Plugin):
         if not self.check_coords(coords):
             logging.info("[GPSD-ng] not saving GPS: no fix")
             return
-
-        try:
-            agent.run(f"set gps.set {coords['Latitude']} {coords['Longitude']}")
-        except Exception as e:
-            logging.error(f"[GPSD-ng] Cannot set bettercap GPS: {e}")
-
-        gps_filename = filename.replace(".pcap", ".gps.json")
-        logging.info(f"[GPSD-ng] saving GPS to {gps_filename} ({coords})")
-        try:
-            with open(gps_filename, "w+t") as fp:
-                json.dump(coords, fp)
-        except Exception as e:
-            logging.error(f"[GPSD-ng] Error on saving gps coordinates: {e}")
+        self.update_bettercap_gps(agent, coords)
+        self.save_gps_file(filename.replace(".pcap", ".gps.json"), coords)
 
     def on_ui_setup(self, ui):
         if self.view_mode == "none":
@@ -547,13 +578,13 @@ class GPSD_ng(plugins.Plugin):
         info = f"{dev}{coords['Fix']} ({coords['Sats_Valid']}/{coords['Sats']} Sats)"
 
         if coords["Latitude"] < 0:
-            lat = f"{-coords['Latitude']:4.6f}S"
+            lat = f"{-coords['Latitude']:4.{self.diplay_precision}f}S"
         else:
-            lat = f"{coords['Latitude']:4.6f}N"
+            lat = f"{coords['Latitude']:4.{self.diplay_precision}f}N"
         if coords["Longitude"] < 0:
-            long = f"{-coords['Longitude']:4.6f}W"
+            long = f"{-coords['Longitude']:4.{self.diplay_precision}f}W"
         else:
-            long = f"{coords['Longitude']:4.6f}E"
+            long = f"{coords['Longitude']:4.{self.diplay_precision}f}E"
 
         alt, spd = "-", "-"
         if coords["Altitude"] != None:
