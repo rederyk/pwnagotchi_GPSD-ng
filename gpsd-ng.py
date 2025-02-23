@@ -29,13 +29,13 @@
 # main.plugins.gpsd-ng.face_1 = "(•_• )"
 # main.plugins.gpsd-ng.face_2 = "( •_•)"
 
-
 import threading
 import json
 import logging
 import re
 import os
 import time
+from copy import deepcopy
 import math
 from datetime import datetime, UTC
 import gps
@@ -61,7 +61,8 @@ class GPSD(threading.Thread):
         self.gpsdhost = None
         self.gpsdport = None
         self.session = None
-        self.devices = dict()
+        self.devices = dict()  # Device:coords dictionnary
+        self.satellites = dict()  # Device:sattelites dictionnary for polar image
         self.main_device = None
         self.last_position = None
         self.elevation_cache = dict()
@@ -127,8 +128,17 @@ class GPSD(threading.Thread):
 
     def update(self):
         with self.lock:
-            if not self.session.device or self.session.fix.mode < 2:  # Remove positions without fix
+            if not self.session.device:
                 return
+            if not self.session.device in self.devices:
+                self.devices[self.session.device] = None
+
+            if self.session.satellites:
+                self.satellites[self.session.device] = deepcopy(self.session.satellites)
+
+            if self.session.fix.mode < 2:  # Remove positions without fix
+                return
+
             if self.session.fix.mode == 3 and not math.isnan(self.session.fix.altMSL):
                 altitude = self.session.fix.altMSL
                 self.cache_elevation(
@@ -141,6 +151,7 @@ class GPSD(threading.Thread):
                 accuracy = 50
             else:
                 accuracy = self.session.fix.sep
+
             self.devices[self.session.device] = dict(
                 Latitude=self.session.fix.latitude,
                 Longitude=self.session.fix.longitude,
@@ -159,6 +170,13 @@ class GPSD(threading.Thread):
     def run(self):
         logging.info(f"[GPSD-ng] Starting loop")
         while self.running:
+            try:  # force reinit to avoid data mixing between devices
+                self.session.device = None
+                self.session.satellites = []
+                self.session.satellites_used = 0
+                self.session.fix = gps.gpsfix()
+            except AttributeError:
+                pass
             if not self.configured:
                 time.sleep(1)
             elif not self.session:
@@ -190,7 +208,7 @@ class GPSD(threading.Thread):
                 if self.main_device and self.devices[self.main_device]:
                     return self.devices[self.main_device]
             except KeyError:
-                logging.error(f"[GPSD-ng] No such device: {self.main_device}")
+                pass
 
             # Fallback
             # Filter devices without coords
@@ -211,6 +229,12 @@ class GPSD(threading.Thread):
                 logging.debug(f"[GPSD-ng] No data, using last position: {self.last_position}")
             return self.last_position
 
+    def get_satellites(self, device):
+        try:
+            return self.satellites[device]
+        except KeyError:
+            return list()
+
     @staticmethod
     def round_position(latitude, longitude):
         return (round(latitude, 4), round(longitude, 4))
@@ -220,7 +244,9 @@ class GPSD(threading.Thread):
 
     def cache_elevation(self, latitude, longitude, elevation):
         key = self.elevation_key(latitude, longitude)
-        self.elevation_cache[key] = elevation
+        if not key in self.cache_elevation:
+            self.elevation_cache[key] = elevation
+            self.save_elevation_cache()
 
     def get_elevation(self, latitude, longitude):
         key = self.elevation_key(latitude, longitude)
@@ -361,7 +387,7 @@ class GPSD_ng(plugins.Plugin):
         if not self.units in ["metric", "imperial"]:
             logging.error(f"[GPSD-ng] Wrong setting for units: {self.units}. Using metric")
             self.units = "metric"
-        self.diplay_precision = int(self.options.get("diplay_precision", 6))
+        self.display_precision = int(self.options.get("display_precision", 6))
         self.position = self.options.get("position", "127,64")
         self.linespacing = int(self.options.get("linespacing", 10))
         self.show_faces = self.options.get("show_faces", True)
@@ -578,13 +604,13 @@ class GPSD_ng(plugins.Plugin):
         info = f"{dev}{coords['Fix']} ({coords['Sats_Valid']}/{coords['Sats']} Sats)"
 
         if coords["Latitude"] < 0:
-            lat = f"{-coords['Latitude']:4.{self.diplay_precision}f}S"
+            lat = f"{-coords['Latitude']:4.{self.display_precision}f}S"
         else:
-            lat = f"{coords['Latitude']:4.{self.diplay_precision}f}N"
+            lat = f"{coords['Latitude']:4.{self.display_precision}f}N"
         if coords["Longitude"] < 0:
-            long = f"{-coords['Longitude']:4.{self.diplay_precision}f}W"
+            long = f"{-coords['Longitude']:4.{self.display_precision}f}W"
         else:
-            long = f"{coords['Longitude']:4.{self.diplay_precision}f}E"
+            long = f"{coords['Longitude']:4.{self.display_precision}f}E"
 
         alt, spd = "-", "-"
         if coords["Altitude"] != None:
@@ -653,16 +679,72 @@ class GPSD_ng(plugins.Plugin):
             case _:
                 pass
 
+    def generate_polar_plot(self, device):
+        """
+        Thanks to https://github.com/rai68/gpsd-easy/blob/main/gpsdeasy.py
+        """
+        try:
+            import numpy as np
+            import base64
+            import io
+            from matplotlib.pyplot import rc, grid, figure, plot, rcParams, savefig, close
+            from math import radians
+        except ImportError:
+            logging.error(f"[GPSD-ng] Error while generating polar_plot")
+            return None
+
+        try:
+            rc("grid", color="#316931", linewidth=1, linestyle="-")
+            rc("xtick", labelsize=15)
+            rc("ytick", labelsize=15)
+
+            # force square figure and square axes looks better for polar, IMO
+            width, height = rcParams["figure.figsize"]
+            size = min(width, height)
+            # make a square figure
+            fig = figure(figsize=(size, size))
+
+            ax = fig.add_axes([0.1, 0.1, 0.8, 0.8], polar=True, facecolor="#d5de9c")
+            ax.set_theta_zero_location("N")
+            ax.set_theta_direction(-1)
+
+            for sat in self.gpsd.get_satellites(device):
+                fc = "green" if sat.used else "red"
+                ax.annotate(
+                    str(sat.PRN),
+                    xy=(radians(sat.azimuth), 90 - sat.elevation),  # theta, radius
+                    bbox=dict(boxstyle="round", fc=fc, alpha=0.5),
+                    horizontalalignment="center",
+                    verticalalignment="center",
+                )
+
+            ax.set_yticks(range(0, 90 + 10, 10))  # Define the yticks
+            yLabel = ["90", "", "", "60", "", "", "30", "", "", "0"]
+            ax.set_yticklabels(yLabel)
+            grid(True)
+
+            image = io.BytesIO()
+            savefig(image, format="png")
+            close(fig)
+            return base64.b64encode(image.getvalue()).decode("utf-8")
+        except Exception as e:
+            logging.error(e)
+            return None
+
     def on_webhook(self, path, request):
         if not self.is_ready:
             return "<html><head><title>GPSD-ng: Error</title></head><body><code>Plugin not ready</code></body></html>"
 
-        coords = self.gpsd.get_position()
-        if not self.check_coords(coords):
-            return "<html><head><title>GPSD-ng: Error</title></hexad><body><code>No GPS Data</code></body></html>"
-        template_file = os.path.dirname(os.path.realpath(__file__)) + "/" + "gpsd-ng.html"
-        try:
-            with open(template_file, "r") as fb:
-                return render_template_string(fb.read(), devices=self.gpsd.devices)
-        except Exception as e:
-            logging.error(f"[GPSD-ng] Error while rendering template: {e}")
+        if path is None or path == "/":
+            template_file = os.path.dirname(os.path.realpath(__file__)) + "/" + "gpsd-ng.html"
+            devices = self.gpsd.devices
+            polar_images = {device: self.generate_polar_plot(device) for device in devices}
+            try:
+                with open(template_file, "r") as fb:
+                    return render_template_string(
+                        fb.read(), devices=devices, polar_images=polar_images
+                    )
+            except Exception as e:
+                logging.error(f"[GPSD-ng] Error while rendering template: {e}")
+        elif path == "getImage/polar":
+            return
