@@ -69,7 +69,8 @@ main.plugins.gpsd-ng.use_open_elevation = true # if true, use open-elevation API
 main.plugins.gpsd-ng.save_elevations = true # if true, elevations cache will be saved to disk. Be carefull as it can grow fast if move a lot.
 main.plugins.gpsd-ng.view_mode = "compact" # "compact", "full", "none" 
 main.plugins.gpsd-ng.fields = "info,speed,altitude" # list or string of fields to display
-main.plugins.gpsd-ng.units = "metric" # "metric", "imperial"
+main.plugins.gpsd-ng.units = "metric" # "metric" or "imperial"
+main.plugins.gpsd-ng.display_precision = 6 # display precision for latitude and longitude
 main.plugins.gpsd-ng.position = "127,64"
 main.plugins.gpsd-ng.lost_face_1 = "(O_o )"
 main.plugins.gpsd-ng.lost_face_2 = "( o_O)"
@@ -130,11 +131,13 @@ This only changes on display, not gps.json files, as Wigle needs metric units.
 Default is metric because it's the International System. 
 
 ## Handshake
-- Set gps position to bettercap (it's also done on internet_available)
+- Set gps position to bettercap (it's also done on internet_available() and on_unfiltered_ap_list())
 - Saves position informations into "gps.json" (compatible with Wigle and webgpsmap)
 
+Note: During on_unfiltered_ap_list(), if an access point whith pcap files but without gps file is detected, this plugin will save the current position for that AP. This is a fallback, if the position was not available during handshake().
+
 ## Bettercap
-Gps option is set to off. Position is update in Bettercap everytime a handshake is captured.
+Gps option is set to off. Position is update by the plugin to Bettercap, on handshake, internet_available and on_unfiltered_ap_list.
 
 # TODO
 - [ ] Run around the World!
