@@ -1,91 +1,110 @@
 {% extends "base.html" %}
 {% set active_page = "GPSD-ng" %}
 {% block title %}
-    {{ title }}
+{{ title }}
 {% endblock %}
 {% block meta %}
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, user-scalable=0" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, user-scalable=0" />
 {% endblock %}
 {% block styles %}
 {{ super() }}
-    <style>
-        #searchText {
-            width: 100%;
-        }
-        table {
-            table-layout: auto;
-            width: 100%;
-        }
-        table, th, td {
+<style>
+    #searchText {
+        width: 100%;
+    }
+
+    table {
+        table-layout: auto;
+        width: 100%;
+    }
+
+    table,
+    th,
+    td {
+        border: 1px solid;
+        border-collapse: collapse;
+    }
+
+    th,
+    td {
+        padding: 15px;
+        text-align: center;
+    }
+
+    @media screen and (max-width:700px) {
+
+        table,
+        tr,
+        td {
+            padding: 0;
             border: 1px solid;
-            border-collapse: collapse;
         }
-        th, td {
-            padding: 15px;
-            text-align: left;
+
+        table {
+            border: none;
         }
-        @media screen and (max-width:700px) {
-            table, tr, td {
-                padding:0;
-                border:1px solid;
-            }
-            table {
-                border:none;
-            }
-            tr:first-child, thead, th {
-                display:none;
-                border:none;
-            }
-            tr {
-                float: left;
-                width: 100%;
-                margin-bottom: 2em;
-            }
-            td {
-                float: left;
-                width: 100%;
-                padding:1em;
-            }
-            td::before {
-                content:attr(data-label);
-                word-wrap: break-word;
-                color: white;
-                border-right:2px solid;
-                width: 20%;
-                float:left;
-                padding:1em;
-                font-weight: bold;
-                margin:-1em 1em -1em -1em;
-            }
+
+        tr:first-child,
+        thead,
+        th {
+            display: none;
+            border: none;
         }
-    </style>
+
+        tr {
+            float: left;
+            width: 100%;
+            margin-bottom: 2em;
+        }
+
+        td {
+            float: center;
+            width: 100%;
+            padding: 1em;
+        }
+
+        td::before {
+            content: attr(data-label);
+            word-wrap: break-word;
+            color: white;
+            border-right: 2px solid;
+            width: 20%;
+            float: left;
+            padding: 1em;
+            font-weight: bold;
+            margin: -1em 1em -1em -1em;
+        }
+    }
+</style>
 {% endblock %}
 {% block script %}
 {% endblock %}
 {% block content %}
-    <table id="tableOptions">
-        <tr>
-            <th>Device</th>
-            <th>Infos</th>
-            <th>Polar Image</th>
-        </tr>
-        {% for dkey in devices %}
-        <tr>
-            <td><strong>{{dkey}}</strong></td>
-            <td>
-                {% if devices[dkey] %}
-                    {% for key in devices[dkey]%}
-                    <strong>{{key}}</strong>: {{devices[dkey][key]}}</br>
-                    {% endfor %}
-                {% else %}
-                    <strong>No data</strong>
-                {% endif %}
-            </td>
-            <td>
-                <img id="polarImage" src="data:image/png;base64, {{polar_images[dkey]}}"/>
-            </td>
-        </tr>    
-        {% endfor %}
-    </table>
+<table id="tableOptions">
+    <tr>
+        <th>Device</th>
+        <th>Polar Image</th>
+    </tr>
+    {% for dkey in devices %}
+    <tr>
+        <td>
+            {% if devices[dkey] %}
+            <h1>{{devices[dkey].device}}</h1>
+            {% set lat_long = devices[dkey].format_lat_long() %}
+            <h2>{{lat_long[0]}}, {{lat_long[1]}} ({{devices[dkey].fix}})</h2>            
+            <strong>Altitude</strong>: {{devices[dkey].format_altitude(units)}}, <strong>Speed</strong>: {{devices[dkey].format_speed(units)}}<br>
+            <strong>Sattelites</strong>: {{devices[dkey].used_satellites}} used/{{devices[dkey].viewed_satellites}} viewed<br>
+            <strong>Date</strong>: {% if devices[dkey].date %}{{devices[dkey].date.strftime('%d/%m/%Y %H:%M:%S %Z')}}{% else %}No date{% endif %}<br>
+            <strong>Accuracy</strong>: {{devices[dkey].accuracy}}<br>
+            {% else %}
+            <strong>No data</strong>
+            {% endif %}
+        </td>
+        <td>
+            <img id="polarImage" src="data:image/png;base64, {{devices[dkey].polar_plot }}"/>
+        </td>
+    </tr>
+    {% endfor %}
+</table>
 {% endblock %}
