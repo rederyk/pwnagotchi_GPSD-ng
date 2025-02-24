@@ -179,8 +179,10 @@ class Position:
             size = min(width, height)
             # make a square figure
             fig = figure(figsize=(size, size))
+            fig.patch.set_alpha(0)
 
             ax = fig.add_axes([0.1, 0.1, 0.8, 0.8], polar=True, facecolor="#d5de9c")
+            ax.patch.set_alpha(1)
             ax.set_theta_zero_location("N")
             ax.set_theta_direction(-1)
 
