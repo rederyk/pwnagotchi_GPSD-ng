@@ -171,8 +171,8 @@ class Position:
 
         try:
             rc("grid", color="#316931", linewidth=1, linestyle="-")
-            rc("xtick", labelsize=12)
-            rc("ytick", labelsize=12)
+            rc("xtick", labelsize=10)
+            rc("ytick", labelsize=10)
 
             # force square figure and square axes looks better for polar, IMO
             width, height = rcParams["figure.figsize"]
