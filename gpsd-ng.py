@@ -196,9 +196,8 @@ class Position:
                     verticalalignment="center",
                 )
 
-            ax.set_yticks(range(0, 90 + 10, 10))  # Define the yticks
-            yLabel = ["90", "", "", "60", "", "", "30", "", "", "0"]
-            ax.set_yticklabels(yLabel)
+            ax.set_yticks(range(0, 90 + 10, 15))  # Define the yticks
+            ax.set_yticklabels(["90", "", "60", "", "30", "", "0"])
             grid(True)
 
             image = io.BytesIO()
@@ -208,6 +207,7 @@ class Position:
         except Exception as e:
             logging.error(e)
             self.polar_plot = ""
+
 
 class GPSD(threading.Thread):
     def __init__(self):
@@ -227,7 +227,7 @@ class GPSD(threading.Thread):
 
     def configure(
         self, gpsdhost: str, gpsdport: int, main_device: str, cache_file: str, save_elevations: str
-    ):
+    ) -> None:
         self.gpsdhost = gpsdhost
         self.gpsdport = gpsdport
         self.main_device = main_device
@@ -450,6 +450,13 @@ class GPSD_ng(plugins.Plugin):
         self.gpsd = GPSD()
         self.options = dict()
         self.ui_counter = 0
+        template_file = os.path.dirname(os.path.realpath(__file__)) + "/" + "gpsd-ng.html"
+        self.template = "Loading error"
+        try:
+            with open(template_file, "r") as fb:
+                self.template = fb.read()
+        except Exception as e:
+            logging.error(f"[GPSD-ng] Cannot read template file {template_file}: {e}")
 
     @property
     def is_ready(self) -> bool:
@@ -461,13 +468,6 @@ class GPSD_ng(plugins.Plugin):
             logging.info("[GPSD-ng] plugin loaded")
         except Exception as e:
             logging.error(f"[GPSD-ng] Error on loading. Trying later...")
-
-    def on_ready(self, agent) -> None:
-        try:
-            logging.info(f"[GPSD-ng] Disabling bettercap's gps module")
-            agent.run("gps off")
-        except Exception as e:
-            logging.info(f"[GPSD-ng] Bettercap gps was already off.")
 
     def on_config_changed(self, config: dict) -> None:
         logging.info("[GPSD-ng] Reading config")
@@ -517,6 +517,13 @@ class GPSD_ng(plugins.Plugin):
             os.path.join(self.handshake_dir, ".elevations"),
             self.save_elevations,
         )
+
+    def on_ready(self, agent) -> None:
+        try:
+            logging.info(f"[GPSD-ng] Disabling bettercap's gps module")
+            agent.run("gps off")
+        except Exception as e:
+            logging.info(f"[GPSD-ng] Bettercap gps was already off.")
 
     def on_unload(self, ui) -> None:
         try:
@@ -769,14 +776,12 @@ class GPSD_ng(plugins.Plugin):
             return "<html><head><title>GPSD-ng: Error</title></head><body><code>Plugin not ready</code></body></html>"
 
         if path is None or path == "/":
-            template_file = os.path.dirname(os.path.realpath(__file__)) + "/" + "gpsd-ng.html"
+            for device in self.gpsd.positions:
+                self.gpsd.positions[device].generate_polar_plot()
             try:
-                for device in self.gpsd.positions:
-                    self.gpsd.positions[device].generate_polar_plot()
-                with open(template_file, "r") as fb:
-                    return render_template_string(
-                        fb.read(), positions=self.gpsd.positions, units=self.units
-                    )
+                return render_template_string(
+                    self.template, positions=self.gpsd.positions, units=self.units
+                )
             except Exception as e:
                 logging.error(f"[GPSD-ng] Error while rendering template: {e}")
                 return "<html><head><title>GPSD-ng: Error</title></head><body><code>Rendering error</code></body></html>"
