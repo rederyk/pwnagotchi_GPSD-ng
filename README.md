@@ -127,6 +127,9 @@ If you prefer a more traditionnal view, use "full" mode:
 You can show or not with the fields option. by default, it will display all.
 If you want a clear display, use "none", nothing will be display.
 
+## Web views
+You should take a look at the Web UI with fancy graphs ;-)
+
 # Units
 You can use metric or imperial units for altitude(m or ft) and speed (m/s or ft/s).
 This only changes on display, not gps.json files, as Wigle needs metric units. 
@@ -145,9 +148,13 @@ Gps option is set to off. Position is update by the plugin to Bettercap, on hand
 - [ ] Run around the World!
  
 # Based on:
-- https://github.com/evilsocket
-- https://github.com/kellertk/pwnagotchi-plugin-gpsd
-- https://github.com/nothingbutlucas/pwnagotchi-plugin-gpsd
-- https://gpsd.gitlab.io/gpsd/index.html
+- Pwnagotchi: 
+  - https://github.com/evilsocket
+  - https://github.com/jayofelony/pwnagotchi
+- GPSD: https://gpsd.gitlab.io/gpsd/index.html
+- Original plugin and fork: 
+  - https://github.com/kellertk/pwnagotchi-plugin-gpsd
+  - https://github.com/nothingbutlucas/pwnagotchi-plugin-gpsd
+- Polar graph: https://github.com/rai68/gpsd-easy/blob/main/gpsdeasy.py
 
 Have fun !
