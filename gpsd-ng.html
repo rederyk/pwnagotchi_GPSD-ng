@@ -86,23 +86,23 @@
         <th>Device</th>
         <th>Polar Image</th>
     </tr>
-    {% for dkey in devices %}
+    {% for dkey in positions %}
     <tr>
         <td>
-            {% if devices[dkey] %}
-            <h1>{{devices[dkey].device}}</h1>
-            {% set lat_long = devices[dkey].format_lat_long() %}
-            <h2>{{lat_long[0]}}, {{lat_long[1]}} ({{devices[dkey].fix}})</h2>            
-            <strong>Altitude</strong>: {{devices[dkey].format_altitude(units)}}, <strong>Speed</strong>: {{devices[dkey].format_speed(units)}}<br>
-            <strong>Sattelites</strong>: {{devices[dkey].used_satellites}} used/{{devices[dkey].viewed_satellites}} viewed<br>
-            <strong>Date</strong>: {% if devices[dkey].date %}{{devices[dkey].date.strftime('%d/%m/%Y %H:%M:%S %Z')}}{% else %}No date{% endif %}<br>
-            <strong>Accuracy</strong>: {{devices[dkey].accuracy}}<br>
+            {% if positions[dkey] %}
+            <h1>{{positions[dkey].device}}</h1>
+            {% set lat_long = positions[dkey].format_lat_long() %}
+            <h2>{{lat_long[0]}}, {{lat_long[1]}} ({{positions[dkey].fix}})</h2>            
+            <strong>Altitude</strong>: {{positions[dkey].format_altitude(units)}}, <strong>Speed</strong>: {{positions[dkey].format_speed(units)}}<br>
+            <strong>Sattelites</strong>: {{positions[dkey].used_satellites}} used/{{positions[dkey].viewed_satellites}} viewed<br>
+            <strong>Date</strong>: {% if positions[dkey].date %}{{positions[dkey].date.strftime('%d/%m/%Y %H:%M:%S %Z')}}{% else %}No date{% endif %}<br>
+            <strong>Accuracy</strong>: {{positions[dkey].accuracy}}<br>
             {% else %}
             <strong>No data</strong>
             {% endif %}
         </td>
         <td>
-            <img id="polarImage" src="data:image/png;base64, {{devices[dkey].polar_plot }}"/>
+            <img id="polarImage" src="data:image/png;base64, {{positions[dkey].polar_plot }}"/>
         </td>
     </tr>
     {% endfor %}

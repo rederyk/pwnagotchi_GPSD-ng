@@ -209,14 +209,13 @@ class Position:
             logging.error(e)
             self.polar_plot = ""
 
-
 class GPSD(threading.Thread):
     def __init__(self):
         super().__init__()
         self.gpsdhost = None
         self.gpsdport = None
         self.session = None
-        self.devices = dict()  # Device:Position dictionnary
+        self.positions = dict()  # Device:Position dictionnary
         self.main_device = None
         self.last_position = None
         self.elevation_data = dict()
@@ -261,12 +260,12 @@ class GPSD(threading.Thread):
         self.last_clean = datetime.now(tz=UTC)
         logging.debug(f"[GPSD-ng] Start cleaning")
         with self.lock:
-            devices_to_clean = []
-            for device in filter(lambda x: self.devices[x], self.devices):
-                if self.devices[device].is_old():
-                    devices_to_clean.append(device)
-            for device in devices_to_clean:
-                self.devices[device] = Position(device=device)
+            positions_to_clean = []
+            for device in filter(lambda x: self.positions[x], self.positions):
+                if self.positions[device].is_old():
+                    positions_to_clean.append(device)
+            for device in positions_to_clean:
+                self.positions[device] = Position(device=device)
                 logging.debug(f"[GPSD-ng] Cleaning {device}")
 
             if self.last_position and self.last_position.is_old(120):
@@ -277,11 +276,11 @@ class GPSD(threading.Thread):
         with self.lock:
             if not self.session.device:
                 return
-            if not self.session.device in self.devices:
-                self.devices[self.session.device] = Position(device=self.session.device)
+            if not self.session.device in self.positions:
+                self.positions[self.session.device] = Position(device=self.session.device)
 
             if self.session.satellites:
-                self.devices[self.session.device].update_satellites(self.session.satellites)
+                self.positions[self.session.device].update_satellites(self.session.satellites)
 
             if self.session.fix.mode < 2:  # Remove positions without fix
                 return
@@ -295,7 +294,7 @@ class GPSD(threading.Thread):
                     self.session.fix.latitude, self.session.fix.longitude
                 )
 
-            self.devices[self.session.device].update_fix(self.session.fix)
+            self.positions[self.session.device].update_fix(self.session.fix)
 
     def run(self) -> None:
         logging.info(f"[GPSD-ng] Starting loop")
@@ -329,25 +328,23 @@ class GPSD(threading.Thread):
             logging.error(f"[GPSD-ng] Error on join(): {e}")
 
     def get_position(self) -> Position | None:
-        if not (self.configured and self.devices):
+        if not (self.configured and self.positions):
             return None
         self.clean()
         with self.lock:
             try:
-                if self.main_device and self.devices[self.main_device]:
-                    return self.devices[self.main_device]
+                if self.main_device and self.positions[self.main_device]:
+                    return self.positions[self.main_device]
             except KeyError:
                 pass
 
             # Fallback
             # Filter devices without coords
-            devices = filter(lambda x: x[1], self.devices.items())
+            devices = filter(lambda x: x[1], self.positions.items())
             # Sort by best positionning and most recent
             devices = sorted(devices)
             try:
-                coords = devices[0][1]  # Get first and best element
-                self.last_position = coords
-                return coords
+                self.last_position = devices[0][1]  # Get first and best element
             except IndexError:
                 logging.debug(f"[GPSD-ng] No data, using last position: {self.last_position}")
             return self.last_position
@@ -450,7 +447,7 @@ class GPSD_ng(plugins.Plugin):
     FIELDS = ["info", "altitude", "speed"]
 
     def __init__(self) -> None:
-        self.gpsd = None
+        self.gpsd = GPSD()
         self.options = dict()
         self.ui_counter = 0
 
@@ -460,7 +457,6 @@ class GPSD_ng(plugins.Plugin):
 
     def on_loaded(self) -> None:
         try:
-            self.gpsd = GPSD()
             self.gpsd.start()
             logging.info("[GPSD-ng] plugin loaded")
         except Exception as e:
@@ -775,11 +771,11 @@ class GPSD_ng(plugins.Plugin):
         if path is None or path == "/":
             template_file = os.path.dirname(os.path.realpath(__file__)) + "/" + "gpsd-ng.html"
             try:
-                for device in self.gpsd.devices:
-                    self.gpsd.devices[device].generate_polar_plot()
+                for device in self.gpsd.positions:
+                    self.gpsd.positions[device].generate_polar_plot()
                 with open(template_file, "r") as fb:
                     return render_template_string(
-                        fb.read(), devices=self.gpsd.devices, units=self.units
+                        fb.read(), positions=self.gpsd.positions, units=self.units
                     )
             except Exception as e:
                 logging.error(f"[GPSD-ng] Error while rendering template: {e}")
