@@ -101,7 +101,7 @@ class Position:
     def to_json(self) -> dict:
         return {
             "Latitude": self.latitude,
-            "Longitude": self.latitude,
+            "Longitude": self.longitude,
             "Altitude": self.altitude,
             "Speed": self.speed,
             "Date": self.date.strftime(self.DATE_FORMAT),
@@ -562,7 +562,6 @@ class GPSD_ng(plugins.Plugin):
         self.update_bettercap_gps(agent, coords)
 
     def save_gps_file(self, gps_filename: str, coords: Position) -> None:
-        return
         logging.info(f"[GPSD-ng] Saving GPS to {gps_filename}")
         try:
             with open(gps_filename, "w+t") as fp:
