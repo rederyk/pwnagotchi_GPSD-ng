@@ -82,7 +82,9 @@ class Position:
         self.latitude = fix.latitude
         self.longitude = fix.longitude
         self.altitude = fix.altMSL
-        self.speed = fix.speed * 0.514444  # speed in knots converted in m/s
+        self.speed = None
+        if not math.isnan(fix.speed):
+            self.speed = fix.speed * 0.514444  # speed in knots converted in m/s
         self.date = datetime.strptime(fix.time, self.DATE_FORMAT).replace(tzinfo=UTC)
         self.mode = fix.mode
         self.fix = self.FIXES.get(fix.mode, "Mode error")
@@ -97,6 +99,9 @@ class Position:
         self.satellites = deepcopy(satellites)
         self.viewed_satellites = len(satellites)
         self.used_satellites = len([s for s in satellites if s.used])
+
+    def is_set(self) -> bool:
+        return self.latitude or self.longitude
 
     def to_json(self) -> dict:
         return {
@@ -137,18 +142,24 @@ class Position:
         return lat, long
 
     def format_altitude(self, units: str) -> str:
-        if self.altitude != None:
-            if units == "metric":
+        match self.altitude, units:
+            case (None, _) | (float("NaN"), _):
+                return "-"
+            case _, "imperial":
+                return f"{round(geopy.units.feet(meters=self.altitude))}ft"
+            case _, "metric":
                 return f"{round(self.altitude)}m"
-            return f"{round(geopy.units.feet(meters=self.altitude))}ft"
-        return "-"
+        return "error"
 
     def format_speed(self, units: str) -> str:
-        if self.speed != None:
-            if units == "metric":
+        match self.speed, units:
+            case (None, _) | (float("NaN"), _):
+                return "-"
+            case _, "imperial":
+                return f"{round(geopy.units.feet(meters=self.speed))}ft/s"
+            case _, "metric":
                 return f"{round(self.speed)}m/s"
-            return f"{round(geopy.units.feet(meters=self.speed))}ft/s"
-        return "-"
+        return "error"
 
     def format(self, units: str, display_precision: int) -> tuple[str, str, str, str, str]:
         info = self.format_info()
@@ -333,18 +344,16 @@ class GPSD(threading.Thread):
         self.clean()
         with self.lock:
             try:
-                if self.main_device and self.positions[self.main_device]:
+                if self.main_device and self.positions[self.main_device].is_set():
                     return self.positions[self.main_device]
             except KeyError:
                 pass
 
             # Fallback
-            # Filter devices without coords
-            devices = filter(lambda x: x[1], self.positions.items())
-            # Sort by best positionning and most recent
-            devices = sorted(devices)
+            # Filter devices without coords and sort by best positionning and most recent
+            positions = sorted(filter(lambda x: x.is_set(), self.positions.values()))
             try:
-                self.last_position = devices[0][1]  # Get first and best element
+                self.last_position = positions[0]  # Get first and best element
             except IndexError:
                 logging.debug(f"[GPSD-ng] No data, using last position: {self.last_position}")
             return self.last_position
@@ -372,6 +381,7 @@ class GPSD(threading.Thread):
 
     def save_elevation_cache(self) -> None:
         if self.elevation_report:
+            logging.info("[GPSD-ng] Saving elevation cache")
             self.elevation_report.update(data={"elevations": self.elevation_data})
 
     def calculate_locations(self, max_dist: int = 100) -> list[tuple[float, float]] | None:
@@ -401,11 +411,13 @@ class GPSD(threading.Thread):
         ):
             return
         self.last_elevation = datetime.now(tz=UTC)
-        logging.info(f"[GPSD-ng] Running elevation cache: {len(self.elevation_data)} available")
+        logging.info(
+            f"[GPSD-ng] Running elevation cache: {len(self.elevation_data)} elvations available"
+        )
 
         if not (locations := self.calculate_locations()):
             return
-        logging.info(f"[GPSD-ng] Trying to cache {len(locations)} locations")
+        logging.info(f"[GPSD-ng] Trying to cache {len(locations)} locations: {locations}")
         try:
             logging.info("[GPSD-ng] let's request")
             res = requests.post(
@@ -545,7 +557,7 @@ class GPSD_ng(plugins.Plugin):
 
     @staticmethod
     def check_coords(coords: Position) -> bool:
-        return coords and all([coords.latitude, coords.longitude])  # avoid 0.000... measurements
+        return coords and coords.is_set()
 
     def update_bettercap_gps(self, agent, coords: Position) -> None:
         try:
