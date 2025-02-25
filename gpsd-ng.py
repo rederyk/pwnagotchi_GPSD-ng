@@ -48,7 +48,7 @@ import json
 import geopy.distance
 import geopy.units
 import requests
-from flask import render_template_string
+from flask import render_template_string, abort
 
 import pwnagotchi.plugins as plugins
 import pwnagotchi.ui.fonts as fonts
@@ -825,16 +825,19 @@ class GPSD_ng(plugins.Plugin):
         if not self.is_ready:
             return "<html><head><title>GPSD-ng: Error</title></head><body><code>Plugin not ready</code></body></html>"
 
-        if path is None or path == "/":
-            for device in self.gpsd.positions:
-                self.gpsd.positions[device].generate_polar_plot()
-            try:
-                return render_template_string(
-                    self.template,
-                    positions=self.gpsd.positions,
-                    units=self.units,
-                    statistics=self.get_statistics(),
-                )
-            except Exception as e:
-                logging.error(f"[GPSD-ng] Error while rendering template: {e}")
-                return "<html><head><title>GPSD-ng: Error</title></head><body><code>Rendering error</code></body></html>"
+        match path:
+            case None | "/":
+                for device in self.gpsd.positions:
+                    self.gpsd.positions[device].generate_polar_plot()
+                try:
+                    return render_template_string(
+                        self.template,
+                        positions=self.gpsd.positions,
+                        units=self.units,
+                        statistics=self.get_statistics(),
+                    )
+                except Exception as e:
+                    logging.error(f"[GPSD-ng] Error while rendering template: {e}")
+                    return "<html><head><title>GPSD-ng: Error</title></head><body><code>Rendering error</code></body></html>"
+            case _:
+                return ""
