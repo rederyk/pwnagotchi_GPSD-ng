@@ -469,7 +469,7 @@ class GPSD_ng(plugins.Plugin):
         self.gpsd = GPSD()
         self.options = dict()
         self.ui_counter = 0
-        self.last_ui_counter = datetime.now(tz=UTC)
+        self.last_ui_update = datetime.now(tz=UTC)
         template_file = os.path.dirname(os.path.realpath(__file__)) + "/" + "gpsd-ng.html"
         self.template = "Loading error"
         try:
@@ -743,9 +743,9 @@ class GPSD_ng(plugins.Plugin):
         with ui._lock:
             match self.ui_counter:
                 case 1:
-                    ui.set(ui, face_1)
+                    ui.set("face", face_1)
                 case 2:
-                    ui.set(ui, face_2)
+                    ui.set("face", face_2)
                 case _:
                     pass
 
@@ -800,10 +800,11 @@ class GPSD_ng(plugins.Plugin):
     def on_ui_update(self, ui) -> None:
         if not self.is_ready or self.view_mode == "none":
             return
-        if (datetime.now(tz=UTC) - self.last_ui_counter).total_seconds() > 10:
-            self.ui_counter = (self.ui_counter + 1) % 5
-            self.last_ui_counter = datetime.now(tz=UTC)
+        if (datetime.now(tz=UTC) - self.last_ui_update).total_seconds() < 10:
+            return
+        self.last_ui_update = datetime.now(tz=UTC)
 
+        self.ui_counter = (self.ui_counter + 1) % 5
         coords = self.gpsd.get_position()
 
         if not self.check_coords(coords):
