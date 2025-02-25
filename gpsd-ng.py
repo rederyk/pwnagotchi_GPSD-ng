@@ -29,6 +29,8 @@
 # main.plugins.gpsd-ng.face_1 = "(•_• )"
 # main.plugins.gpsd-ng.face_2 = "( •_•)"
 
+import base64
+import io
 import threading
 import json
 import logging
@@ -78,6 +80,7 @@ class Position:
     def __lt__(self, other: Self) -> bool:
         return (self.mode, self.date) < (other.mode, other.date)
 
+    # ---------- UPDATES ----------
     def update_fix(self, fix: gps.gpsfix) -> None:
         self.latitude = fix.latitude
         self.longitude = fix.longitude
@@ -94,8 +97,7 @@ class Position:
 
     def update_satellites(self, satellites: list[gps.gpsdata.satellite]) -> None:
         if self.mode < 2:
-            self.mode = 1
-            self.fix = self.FIXES[1]
+            self.mode, self.fix = 1, self.FIXES[1]
         self.satellites = deepcopy(satellites)
         self.viewed_satellites = len(satellites)
         self.used_satellites = len([s for s in satellites if s.used])
@@ -103,6 +105,13 @@ class Position:
     def is_set(self) -> bool:
         return self.latitude or self.longitude
 
+    def is_old(self, max_seconds: int = 90) -> bool:
+        try:
+            return (datetime.now(tz=UTC) - self.date).total_seconds() > max_seconds
+        except TypeError:
+            return False
+
+    # ---------- JSON DUMP ----------
     def to_json(self) -> dict:
         return {
             "Latitude": self.latitude,
@@ -119,12 +128,7 @@ class Position:
             "Accuracy": self.accuracy,
         }
 
-    def is_old(self, max_seconds: int = 90) -> bool:
-        try:
-            return (datetime.now(tz=UTC) - self.date).total_seconds() > max_seconds
-        except TypeError:
-            return False
-
+    # ---------- FORMAT ----------
     def format_info(self) -> str:
         dev = re.search(r"(^tcp|^udp|tty.*)", self.device, re.IGNORECASE)
         dev = f"{dev[0]}:" if dev else ""
@@ -173,11 +177,9 @@ class Position:
         Thanks to https://github.com/rai68/gpsd-easy/blob/main/gpsdeasy.py
         """
         try:
-            import base64
-            import io
             from matplotlib.pyplot import rc, grid, figure, rcParams, savefig, close
         except ImportError:
-            logging.error(f"[GPSD-ng] Error while importing modules for generate_polar_plot()")
+            logging.error(f"[GPSD-ng] Error while importing matplotlib for generate_polar_plot()")
             return None
 
         try:
@@ -236,6 +238,7 @@ class GPSD(threading.Thread):
         self.lock = threading.Lock()
         self.running = True
 
+    # ---------- CONFIGURE AND CONNECTION ----------
     def configure(
         self, gpsdhost: str, gpsdport: int, main_device: str, cache_file: str, save_elevations: str
     ) -> None:
@@ -265,6 +268,35 @@ class GPSD(threading.Thread):
                 logging.error(f"[GPSD-ng] Error while connecting to GPSD: {e}")
                 self.session = None
 
+    # ---------- UPDATE AND CLEAN ----------
+    def update(self) -> None:
+        with self.lock:
+            if not self.session.device:
+                return
+            if not self.session.device in self.positions:
+                self.positions[self.session.device] = Position(device=self.session.device)
+
+            if self.session.satellites:
+                self.positions[self.session.device].update_satellites(self.session.satellites)
+
+            match self.session.fix.mode:
+                case 0 | 1:  # Remove positions without fix
+                    return
+                case 2:  # try retreive altitude for 2D fix
+                    self.session.fix.altMSL = self.get_elevation(
+                        self.session.fix.latitude, self.session.fix.longitude
+                    )
+                case 3 if not math.isnan(self.session.fix.altMSL):  # cache altitude for 3D fix
+                    self.cache_elevation(
+                        self.session.fix.latitude,
+                        self.session.fix.longitude,
+                        self.session.fix.altMSL,
+                    )
+                case _:
+                    logging.error(f"[GPSD-ng] FIX error: {self.session.fix.mode}")
+
+            self.positions[self.session.device].update_fix(self.session.fix)
+
     def clean(self) -> None:
         if (datetime.now(tz=UTC) - self.last_clean).total_seconds() < 10:
             return
@@ -283,30 +315,7 @@ class GPSD(threading.Thread):
                 self.last_position = None
                 logging.debug(f"[GPSD-ng] Cleaning last position")
 
-    def update(self) -> None:
-        with self.lock:
-            if not self.session.device:
-                return
-            if not self.session.device in self.positions:
-                self.positions[self.session.device] = Position(device=self.session.device)
-
-            if self.session.satellites:
-                self.positions[self.session.device].update_satellites(self.session.satellites)
-
-            if self.session.fix.mode < 2:  # Remove positions without fix
-                return
-
-            if self.session.fix.mode == 3 and not math.isnan(self.session.fix.altMSL):
-                self.cache_elevation(
-                    self.session.fix.latitude, self.session.fix.longitude, self.session.fix.altMSL
-                )
-            else:
-                self.session.fix.altMSL = self.get_elevation(
-                    self.session.fix.latitude, self.session.fix.longitude
-                )
-
-            self.positions[self.session.device].update_fix(self.session.fix)
-
+    # ---------- MAIN LOOP ----------
     def run(self) -> None:
         logging.info(f"[GPSD-ng] Starting loop")
         while self.running:
@@ -338,6 +347,7 @@ class GPSD(threading.Thread):
         except Exception as e:
             logging.error(f"[GPSD-ng] Error on join(): {e}")
 
+    # ---------- POSITION ----------
     def get_position(self) -> Position | None:
         if not (self.configured and self.positions):
             return None
@@ -358,7 +368,7 @@ class GPSD(threading.Thread):
                 logging.debug(f"[GPSD-ng] No data, using last position: {self.last_position}")
             return self.last_position
 
-    # ---------- OPEN ELEVATION ----------
+    # ---------- OPEN ELEVATION CACHE ----------
     @staticmethod
     def round_position(latitude: float, longitude: float) -> tuple[float, float]:
         return (round(latitude, 4), round(longitude, 4))
@@ -455,13 +465,13 @@ class GPSD_ng(plugins.Plugin):
         "enabled": False,
     }
 
-    LABEL_SPACING = 0
     FIELDS = ["info", "altitude", "speed"]
 
     def __init__(self) -> None:
         self.gpsd = GPSD()
         self.options = dict()
         self.ui_counter = 0
+        self.last_ui_counter = datetime.now(tz=UTC)
         template_file = os.path.dirname(os.path.realpath(__file__)) + "/" + "gpsd-ng.html"
         self.template = "Loading error"
         try:
@@ -474,6 +484,7 @@ class GPSD_ng(plugins.Plugin):
     def is_ready(self) -> bool:
         return self.gpsd and self.gpsd.configured
 
+    # ----------LOAD AND CONFIGURE ----------
     def on_loaded(self) -> None:
         try:
             self.gpsd.start()
@@ -537,6 +548,7 @@ class GPSD_ng(plugins.Plugin):
         except Exception as e:
             logging.info(f"[GPSD-ng] Bettercap gps was already off.")
 
+    # ---------- UNLOAD ----------
     def on_unload(self, ui) -> None:
         try:
             self.gpsd.join()
@@ -555,6 +567,7 @@ class GPSD_ng(plugins.Plugin):
                 except KeyError:
                     pass
 
+    # ---------- UPDATES ----------
     @staticmethod
     def check_coords(coords: Position) -> bool:
         return coords and coords.is_set()
@@ -576,6 +589,7 @@ class GPSD_ng(plugins.Plugin):
             return
         self.update_bettercap_gps(agent, coords)
 
+    # ---------- WIFI HOOKS ----------
     def save_gps_file(self, gps_filename: str, coords: Position) -> None:
         logging.info(f"[GPSD-ng] Saving GPS to {gps_filename}")
         try:
@@ -583,25 +597,6 @@ class GPSD_ng(plugins.Plugin):
                 json.dump(coords.to_json(), fp)
         except Exception as e:
             logging.error(f"[GPSD-ng] Error on saving gps coordinates: {e}")
-
-    def get_statistics(self) -> tuple[int, int]:
-        pcap_files = glob(os.path.join(self.handshake_dir, "*.pcap"))
-        nb_pcap_files = len(pcap_files)
-        nb_position_files = 0
-        for pcap_file in pcap_files:
-            gps_file = pcap_file.replace(".pcap", ".gps.json")
-            geo_file = pcap_file.replace(".pcap", ".geo.json")
-            if (os.path.exists(gps_file) and os.path.getsize(gps_file)) or (
-                os.path.exists(geo_file) and os.path.getsize(geo_file)
-            ):
-                nb_position_files += 1
-        return dict(
-            nb_devices=len(self.gpsd.positions),
-            nb_pcap_files=nb_pcap_files,
-            nb_position_files=nb_position_files,
-            completeness=round(nb_position_files / nb_pcap_files * 100, 1),
-            nb_cached_elevation=len(self.gpsd.elevation_data),
-        )
 
     def on_unfiltered_ap_list(self, agent, aps) -> None:
         if not self.is_ready:
@@ -643,6 +638,7 @@ class GPSD_ng(plugins.Plugin):
         self.update_bettercap_gps(agent, coords)
         self.save_gps_file(filename.replace(".pcap", ".gps.json"), coords)
 
+    # ---------- UI ----------
     def on_ui_setup(self, ui) -> None:
         if self.view_mode == "none":
             return
@@ -718,23 +714,48 @@ class GPSD_ng(plugins.Plugin):
                                 position=label_pos,
                                 label_font=fonts.Small,
                                 text_font=fonts.Small,
-                                label_spacing=self.LABEL_SPACING,
+                                label_spacing=0,
                             ),
                         )
             case _:
                 pass
 
-    def set_face(self, ui, face: str) -> None:
-        if self.show_faces and face:
-            ui.set("face", face)
+    def get_statistics(self) -> tuple[int, int]:
+        pcap_files = glob(os.path.join(self.handshake_dir, "*.pcap"))
+        nb_pcap_files = len(pcap_files)
+        nb_position_files = 0
+        for pcap_file in pcap_files:
+            gps_file = pcap_file.replace(".pcap", ".gps.json")
+            geo_file = pcap_file.replace(".pcap", ".geo.json")
+            if (os.path.exists(gps_file) and os.path.getsize(gps_file)) or (
+                os.path.exists(geo_file) and os.path.getsize(geo_file)
+            ):
+                nb_position_files += 1
+        return dict(
+            nb_devices=len(self.gpsd.positions),
+            nb_pcap_files=nb_pcap_files,
+            nb_position_files=nb_position_files,
+            completeness=round(nb_position_files / nb_pcap_files * 100, 1),
+            nb_cached_elevation=len(self.gpsd.elevation_data),
+        )
+
+    def display_face(self, ui, face_1: str, face_2: str) -> None:
+        if not self.show_faces:
+            return
+        with ui._lock:
+            match self.ui_counter:
+                case 1:
+                    ui.set(ui, face_1)
+                case 2:
+                    ui.set(ui, face_2)
+                case _:
+                    pass
 
     def lost_mode(self, ui, coords: Position) -> None:
         with ui._lock:
             if self.ui_counter == 1:
                 ui.set("status", "Where am I???")
-                self.set_face(ui, self.lost_face_1)
-            elif self.ui_counter == 2:
-                self.set_face(ui, self.lost_face_2)
+            self.display_face(ui, self.lost_face_1, self.lost_face_2)
 
             match self.view_mode:
                 case "compact":
@@ -747,13 +768,6 @@ class GPSD_ng(plugins.Plugin):
                             pass
                 case _:
                     pass
-
-    def display_face(self, ui) -> None:
-        with ui._lock:
-            if self.ui_counter == 1:
-                self.set_face(ui, self.face_1)
-            elif self.ui_counter == 2:
-                self.set_face(ui, self.face_2)
 
     def compact_view_mode(self, ui, coords: Position) -> None:
         info, lat, long, alt, spd = coords.format(self.units, self.display_precision)
@@ -788,15 +802,17 @@ class GPSD_ng(plugins.Plugin):
     def on_ui_update(self, ui) -> None:
         if not self.is_ready or self.view_mode == "none":
             return
+        if (datetime.now(tz=UTC) - self.last_ui_counter).total_seconds() > 10:
+            self.ui_counter = (self.ui_counter + 1) % 5
+            self.last_ui_counter = datetime.now(tz=UTC)
 
-        self.ui_counter = (self.ui_counter + 1) % 5
         coords = self.gpsd.get_position()
 
         if not self.check_coords(coords):
             self.lost_mode(ui, coords)
             return
 
-        self.display_face(ui)
+        self.display_face(ui, self.face_1, self.face_2)
         match self.view_mode:
             case "compact":
                 self.compact_view_mode(ui, coords)
