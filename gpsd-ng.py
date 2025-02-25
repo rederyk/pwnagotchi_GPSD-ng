@@ -34,6 +34,7 @@ import json
 import logging
 import re
 import os
+from glob import glob
 from dataclasses import dataclass, field
 from typing import Self
 import time
@@ -45,7 +46,6 @@ import json
 import geopy.distance
 import geopy.units
 import requests
-from functools import total_ordering
 from flask import render_template_string
 
 import pwnagotchi.plugins as plugins
@@ -444,7 +444,7 @@ class GPSD_ng(plugins.Plugin):
     __name__ = "GPSD-ng"
     __GitHub__ = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
     __author__ = "@fmatray"
-    __version__ = "1.5.0"
+    __version__ = "1.6.0"
     __license__ = "GPL3"
     __description__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
     __help__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
@@ -583,6 +583,25 @@ class GPSD_ng(plugins.Plugin):
                 json.dump(coords.to_json(), fp)
         except Exception as e:
             logging.error(f"[GPSD-ng] Error on saving gps coordinates: {e}")
+
+    def get_statistics(self) -> tuple[int, int]:
+        pcap_files = glob(os.path.join(self.handshake_dir, "*.pcap"))
+        nb_pcap_files = len(pcap_files)
+        nb_position_files = 0
+        for pcap_file in pcap_files:
+            gps_file = pcap_file.replace(".pcap", ".gps.json")
+            geo_file = pcap_file.replace(".pcap", ".geo.json")
+            if (os.path.exists(gps_file) and os.path.getsize(gps_file)) or (
+                os.path.exists(geo_file) and os.path.getsize(geo_file)
+            ):
+                nb_position_files += 1
+        return dict(
+            nb_devices=len(self.gpsd.positions),
+            nb_pcap_files=nb_pcap_files,
+            nb_position_files=nb_position_files,
+            completeness=round(nb_position_files / nb_pcap_files * 100, 1),
+            nb_cached_elevation=len(self.gpsd.elevation_data),
+        )
 
     def on_unfiltered_ap_list(self, agent, aps) -> None:
         if not self.is_ready:
@@ -737,21 +756,24 @@ class GPSD_ng(plugins.Plugin):
                 self.set_face(ui, self.face_2)
 
     def compact_view_mode(self, ui, coords: Position) -> None:
+        info, lat, long, alt, spd = coords.format(self.units, self.display_precision)
         with ui._lock:
-            info, lat, long, alt, spd = coords.format(self.units, self.display_precision)
-            if self.ui_counter == 0 and "info" in self.fields:
-                ui.set("gps", info)
-                return
-            if self.ui_counter == 1:
-                msg = []
-                if "speed" in self.fields:
-                    msg.append(f"Spd:{spd}")
-                if "altitude" in self.fields:
-                    msg.append(f"Alt:{alt}")
-                if msg:
-                    ui.set("gps", " ".join(msg))
-                    return
-            ui.set("gps", f"{lat},{long}")
+            match self.ui_counter:
+                case 0 if "info" in self.fields:
+                    ui.set("gps", info)
+                case 1:
+                    msg = []
+                    if "speed" in self.fields:
+                        msg.append(f"Spd:{spd}")
+                    if "altitude" in self.fields:
+                        msg.append(f"Alt:{alt}")
+                    if msg:
+                        ui.set("gps", " ".join(msg))
+                case 2:
+                    statistics = self.get_statistics()
+                    ui.set("gps", f"Captured:{statistics['completeness']}%")
+                case _:
+                    ui.set("gps", f"{lat},{long}")
 
     def full_view_mode(self, ui, coords: Position) -> None:
         _, lat, long, alt, spd = coords.format(self.units, self.display_precision)
@@ -792,7 +814,10 @@ class GPSD_ng(plugins.Plugin):
                 self.gpsd.positions[device].generate_polar_plot()
             try:
                 return render_template_string(
-                    self.template, positions=self.gpsd.positions, units=self.units
+                    self.template,
+                    positions=self.gpsd.positions,
+                    units=self.units,
+                    statistics=self.get_statistics(),
                 )
             except Exception as e:
                 logging.error(f"[GPSD-ng] Error while rendering template: {e}")

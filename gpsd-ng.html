@@ -10,8 +10,9 @@
 {% block styles %}
 {{ super() }}
 <style>
-    #searchText {
+    .statistics {
         width: 100%;
+        text-align: center;
     }
 
     table {
@@ -81,9 +82,18 @@
 {% block script %}
 {% endblock %}
 {% block content %}
+<div class="statistics">
+    <h1>GPS Statistics</h1>
+    <p>
+        {{statistics["nb_devices"]}} {% if statistics["nb_devices"] <= 1 %}device{% else %}devices{%endif%} found<br>
+            {{statistics["nb_position_files"]}} position files for {{statistics["nb_pcap_files"]}} pcap files:
+            {{statistics["completeness"]}}% of completeness<br>
+            {{statistics["nb_cached_elevation"]}} cached elevations
+    </p>
+</div>
 <table id="tableOptions">
     <tr>
-        <th>Device</th>
+        <th>GPS device</th>
         <th>Polar Image</th>
     </tr>
     {% for dkey in positions %}
@@ -92,17 +102,20 @@
             {% if positions[dkey] %}
             <h1>{{positions[dkey].device}}</h1>
             {% set lat_long = positions[dkey].format_lat_long() %}
-            <h2>{{lat_long[0]}}, {{lat_long[1]}} ({{positions[dkey].fix}})</h2>            
-            <strong>Altitude</strong>: {{positions[dkey].format_altitude(units)}}, <strong>Speed</strong>: {{positions[dkey].format_speed(units)}}<br>
-            <strong>Sattelites</strong>: {{positions[dkey].used_satellites}} used/{{positions[dkey].viewed_satellites}} viewed<br>
-            <strong>Date</strong>: {% if positions[dkey].date %}{{positions[dkey].date.strftime('%d/%m/%Y %H:%M:%S %Z')}}{% else %}No date{% endif %}<br>
+            <h2>{{lat_long[0]}}, {{lat_long[1]}} ({{positions[dkey].fix}})</h2>
+            <strong>Altitude</strong>: {{positions[dkey].format_altitude(units)}}, <strong>Speed</strong>:
+            {{positions[dkey].format_speed(units)}}<br>
+            <strong>Sattelites</strong>: {{positions[dkey].used_satellites}} used/{{positions[dkey].viewed_satellites}}
+            viewed<br>
+            <strong>Date</strong>: {% if positions[dkey].date %}{{positions[dkey].date.strftime('%d/%m/%Y %H:%M:%S
+            %Z')}}{% else %}No date{% endif %}<br>
             <strong>Accuracy</strong>: {{positions[dkey].accuracy}}<br>
             {% else %}
             <strong>No data</strong>
             {% endif %}
         </td>
         <td>
-            <img id="polarImage" src="data:image/png;base64, {{positions[dkey].polar_plot }}"/>
+            <img id="polarImage" src="data:image/png;base64, {{positions[dkey].polar_plot }}" />
         </td>
     </tr>
     {% endfor %}
