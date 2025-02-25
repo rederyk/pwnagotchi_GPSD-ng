@@ -76,106 +76,95 @@ class Position:
     device: str = ""
     accuracy: float = 0
 
-    def __post_init__(self):
-        self.lock = threading.Lock()
-
     def __lt__(self, other: Self) -> bool:
         return (self.mode, self.date) < (other.mode, other.date)
 
     # ---------- UPDATES ----------
     def update_fix(self, fix: gps.gpsfix) -> None:
-        with self.lock:
-            self.latitude = fix.latitude
-            self.longitude = fix.longitude
-            self.altitude = fix.altMSL
-            self.speed = None
-            if not math.isnan(fix.speed):
-                self.speed = fix.speed * 0.514444  # speed in knots converted in m/s
-            self.date = datetime.strptime(fix.time, self.DATE_FORMAT).replace(tzinfo=UTC)
-            self.mode = fix.mode
-            self.fix = self.FIXES.get(fix.mode, "Mode error")
-            self.accuracy = 50
-            if not math.isnan(fix.sep):
-                self.accuracy = fix.sep
+        self.latitude = fix.latitude
+        self.longitude = fix.longitude
+        self.altitude = fix.altMSL
+        self.speed = None
+        if not math.isnan(fix.speed):
+            self.speed = fix.speed * 0.514444  # speed in knots converted in m/s
+        self.date = datetime.strptime(fix.time, self.DATE_FORMAT).replace(tzinfo=UTC)
+        self.mode = fix.mode
+        self.fix = self.FIXES.get(fix.mode, "Mode error")
+        self.accuracy = 50
+        if not math.isnan(fix.sep):
+            self.accuracy = fix.sep
 
     def update_satellites(self, satellites: list[gps.gpsdata.satellite]) -> None:
-        with self.lock:
-            if self.mode < 2:
-                self.mode, self.fix = 1, self.FIXES[1]
-            self.satellites = deepcopy(satellites)
-            self.viewed_satellites = len(satellites)
-            self.used_satellites = len([s for s in satellites if s.used])
+        if self.mode < 2:
+            self.mode, self.fix = 1, self.FIXES[1]
+        self.satellites = deepcopy(satellites)
+        self.viewed_satellites = len(satellites)
+        self.used_satellites = len([s for s in satellites if s.used])
 
     def is_set(self) -> bool:
         return self.latitude or self.longitude
 
     def is_old(self, max_seconds: int = 90) -> bool:
-        with self.lock:
-            try:
-                return (datetime.now(tz=UTC) - self.date).total_seconds() > max_seconds
-            except TypeError:
-                return False
+        try:
+            return (datetime.now(tz=UTC) - self.date).total_seconds() > max_seconds
+        except TypeError:
+            return False
 
     # ---------- JSON DUMP ----------
     def to_json(self) -> dict:
-        with self.lock:
-            return {
-                "Latitude": self.latitude,
-                "Longitude": self.longitude,
-                "Altitude": self.altitude,
-                "Speed": self.speed,
-                "Date": self.date.strftime(self.DATE_FORMAT),
-                "Updated": self.date.strftime(self.DATE_FORMAT),  # Wigle plugin
-                "Mode": self.mode,
-                "Fix": self.fix,
-                "Sats": self.viewed_satellites,
-                "Sats_Valid": self.used_satellites,
-                "Device": self.device,
-                "Accuracy": self.accuracy,
-            }
+        return {
+            "Latitude": self.latitude,
+            "Longitude": self.longitude,
+            "Altitude": self.altitude,
+            "Speed": self.speed,
+            "Date": self.date.strftime(self.DATE_FORMAT),
+            "Updated": self.date.strftime(self.DATE_FORMAT),  # Wigle plugin
+            "Mode": self.mode,
+            "Fix": self.fix,
+            "Sats": self.viewed_satellites,
+            "Sats_Valid": self.used_satellites,
+            "Device": self.device,
+            "Accuracy": self.accuracy,
+        }
 
     # ---------- FORMAT ----------
     def format_info(self) -> str:
-        with self.lock:
-            dev = re.search(r"(^tcp|^udp|tty.*)", self.device, re.IGNORECASE)
-            dev = f"{dev[0]}:" if dev else ""
-            return f"{dev}{self.fix} ({self.used_satellites}/{self.viewed_satellites} Sats)"
+        dev = re.search(r"(^tcp|^udp|tty.*)", self.device, re.IGNORECASE)
+        dev = f"{dev[0]}:" if dev else ""
+        return f"{dev}{self.fix} ({self.used_satellites}/{self.viewed_satellites} Sats)"
 
     def format_lat_long(self, display_precision: int = 6) -> str:
-        with self.lock:
-            if self.latitude < 0:
-                lat = f"{-self.latitude:4.{display_precision}f}S"
-            else:
-                lat = f"{self.latitude:4.{display_precision}f}N"
-            if self.longitude < 0:
-                long = f"{-self.longitude:4.{display_precision}f}W"
-            else:
-                long = f"{self.longitude:4.{display_precision}f}E"
-            return lat, long
+        if self.latitude < 0:
+            lat = f"{-self.latitude:4.{display_precision}f}S"
+        else:
+            lat = f"{self.latitude:4.{display_precision}f}N"
+        if self.longitude < 0:
+            long = f"{-self.longitude:4.{display_precision}f}W"
+        else:
+            long = f"{self.longitude:4.{display_precision}f}E"
+        return lat, long
 
     def format_altitude(self, units: str) -> str:
-        with self.lock:
-            match self.altitude, units:
-                case (None, _) | (float("NaN"), _):
-                    return "-"
-                case _, "imperial":
-                    return f"{round(geopy.units.feet(meters=self.altitude))}ft"
-                case _, "metric":
-                    return f"{round(self.altitude)}m"
-            return "error"
+        match self.altitude, units:
+            case (None, _) | (float("NaN"), _):
+                return "-"
+            case _, "imperial":
+                return f"{round(geopy.units.feet(meters=self.altitude))}ft"
+            case _, "metric":
+                return f"{round(self.altitude)}m"
+        return "error"
 
     def format_speed(self, units: str) -> str:
-        with self.lock:
-            match self.speed, units:
-                case (None, _) | (float("NaN"), _):
-                    return "-"
-                case _, "imperial":
-                    return f"{round(geopy.units.feet(meters=self.speed))}ft/s"
-                case _, "metric":
-                    return f"{round(self.speed)}m/s"
-            return "error"
+        match self.speed, units:
+            case (None, _) | (float("NaN"), _):
+                return "-"
+            case _, "imperial":
+                return f"{round(geopy.units.feet(meters=self.speed))}ft/s"
+            case _, "metric":
+                return f"{round(self.speed)}m/s"
+        return "error"
 
-    def format(self, units: str, display_precision: int) -> tuple[str, str, str, str, str]:    
+    def format(self, units: str, display_precision: int) -> tuple[str, str, str, str, str]:
         info = self.format_info()
         lat, long = self.format_lat_long(display_precision)
         alt = self.format_altitude(units)
@@ -191,7 +180,7 @@ class Position:
         except ImportError:
             logging.error(f"[GPSD-ng] Error while importing matplotlib for generate_polar_plot()")
             return None
-    
+
         try:
             rc("grid", color="#316931", linewidth=1, linestyle="-")
             rc("xtick", labelsize=10)
@@ -208,16 +197,15 @@ class Position:
             ax.patch.set_alpha(1)
             ax.set_theta_zero_location("N")
             ax.set_theta_direction(-1)
-            with self.lock:
-                for sat in self.satellites:
-                    fc = "green" if sat.used else "red"
-                    ax.annotate(
-                        str(sat.PRN),
-                        xy=(math.radians(sat.azimuth), 90 - sat.elevation),  # theta, radius
-                        bbox=dict(boxstyle="round", fc=fc, alpha=0.4),
-                        horizontalalignment="center",
-                        verticalalignment="center",
-                    )
+            for sat in self.satellites:
+                fc = "green" if sat.used else "red"
+                ax.annotate(
+                    str(sat.PRN),
+                    xy=(math.radians(sat.azimuth), 90 - sat.elevation),  # theta, radius
+                    bbox=dict(boxstyle="round", fc=fc, alpha=0.4),
+                    horizontalalignment="center",
+                    verticalalignment="center",
+                )
 
             ax.set_yticks(range(0, 90 + 10, 15))  # Define the yticks
             ax.set_yticklabels(["90", "", "60", "", "30", "", "0"])
