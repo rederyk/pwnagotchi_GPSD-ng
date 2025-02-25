@@ -144,6 +144,34 @@ Note: During on_unfiltered_ap_list(), if an access point whith pcap files but wi
 ## Bettercap
 Gps option is set to off. Position is update by the plugin to Bettercap, on handshake, internet_available and on_unfiltered_ap_list.
 
+## Troubleshooting: Have you tried to turn it off and on again?
+### "[GPSD-ng] Error while importing matplotlib for generate_polar_plot()"
+matplotlib is not up to date in /home/pi/.pwn:
+- su -
+- cd /home/pi/.pwn
+- source bin/activate
+- pip install scipy numpy matplotlib --upgrade
+
+### "[Errno 2] No such file or directory: '/usr/local/share/pwnagotchi/custom-plugins/gpsd-ng.html'"
+gpsd-ng.html is missing, just copy :-)
+
+### "TypeError: JSONDecoder.init() got an unexpected keyword argument 'encoding'"
+The gpsd python library, called "gps", is old (around 2020).  
+An update will do the trick.
+
+### "[GPSD-ng] Error while connecting to GPSD: [Errno 111] Connection refused"
+- GPSD server is not running: 
+ - Try to restart gpsd: sudo systemctl restart gpsd
+ - Check status: sudo systemctl status gpsd
+ - Check logs
+- GPSD server is not configured. Check install section.
+- GPSD configuration is wrong:
+ - Try "cgps" or "gpsmon" to check if you have readings
+
+### GPSD server is running and the plugin is connected but I have no position
+- Check with "cgps" if gpsd can retreive data from gps modules
+- The plugin filters data without fix. You can check on the plugin's webpage.
+
 # TODO
 - [ ] Run around the World!
  
