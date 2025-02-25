@@ -80,6 +80,37 @@
 </style>
 {% endblock %}
 {% block script %}
+document.addEventListener("DOMContentLoaded", () => {
+    const refreshButtons = document.querySelectorAll('button[id^="refresh_"]');
+
+    refreshButtons.forEach(button => {
+        const device = button.dataset.device;
+        const target = button.dataset.target;
+        button.addEventListener("click", async () => {
+            await refreshPolarImage(device, target);
+        });
+    });
+});
+
+async function refreshPolarImage(device, target) {
+    const polarImage = document.getElementById(target);
+    if (!polarImage) {
+        console.error("Image element not found");
+        return;
+    }
+
+    try {
+        const response = await fetch(`${window.location.origin}/plugins/gpsd-ng/polar?device=`+device);
+        if (response.ok) {
+            const base64Image = await response.text();
+            polarImage.src = `data:image/png;base64,${base64Image}`;
+        } else {
+            console.error("Failed to fetch the image");
+        }
+    } catch (error) {
+        console.error("An error occurred while fetching the image:", error);
+    }
+}
 {% endblock %}
 {% block content %}
 <div class="statistics">
@@ -115,7 +146,8 @@
             {% endif %}
         </td>
         <td>
-            <img id="polarImage" src="data:image/png;base64, {{positions[dkey].polar_plot }}" />
+            <img id="polar_{{loop.index}}" src="data:image/png;base64,{{positions[dkey].generate_polar_plot()}}" alt="Polar Image for {{dkey}}" aria-label="Polar Image for {{dkey}}"/>
+            <button id="refresh_{{loop.index}}" data-target="polar_{{loop.index}}" data-device="{{dkey}}" aria-label="Refresh Polar Image">Refresh</button>
         </td>
     </tr>
     {% endfor %}
