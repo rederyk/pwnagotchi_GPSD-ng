@@ -749,62 +749,58 @@ class GPSD_ng(plugins.Plugin):
     def display_face(self, ui, face_1: str, face_2: str) -> None:
         if not self.show_faces:
             return
-        with ui._lock:
-            match self.ui_counter:
-                case 1:
-                    ui.set("face", face_1)
-                case 2:
-                    ui.set("face", face_2)
-                case _:
-                    pass
+        match self.ui_counter:
+            case 1:
+                ui.set("face", face_1)
+            case 2:
+                ui.set("face", face_2)
+            case _:
+                pass
 
     def lost_mode(self, ui, coords: Position) -> None:
-        with ui._lock:
-            if self.ui_counter == 1:
-                ui.set("status", "Where am I???")
-            self.display_face(ui, self.lost_face_1, self.lost_face_2)
+        if self.ui_counter == 1:
+            ui.set("status", "Where am I???")
+        self.display_face(ui, self.lost_face_1, self.lost_face_2)
 
-            match self.view_mode:
-                case "compact":
-                    ui.set("gps", "No GPS Data")
-                case "full":
-                    for i in ["latitude", "longitude", "altitude", "speed"]:
-                        try:
-                            ui.set(i, "-")
-                        except KeyError:
-                            pass
-                case _:
-                    pass
+        match self.view_mode:
+            case "compact":
+                ui.set("gps", "No GPS Data")
+            case "full":
+                for i in ["latitude", "longitude", "altitude", "speed"]:
+                    try:
+                        ui.set(i, "-")
+                    except KeyError:
+                        pass
+            case _:
+                pass
 
     def compact_view_mode(self, ui, coords: Position) -> None:
         info, lat, long, alt, spd = coords.format(self.units, self.display_precision)
-        with ui._lock:
-            match self.ui_counter:
-                case 0 if "info" in self.fields:
-                    ui.set("gps", info)
-                case 1:
-                    msg = []
-                    if "speed" in self.fields:
-                        msg.append(f"Spd:{spd}")
-                    if "altitude" in self.fields:
-                        msg.append(f"Alt:{alt}")
-                    if msg:
-                        ui.set("gps", " ".join(msg))
-                case 2:
-                    statistics = self.get_statistics()
-                    ui.set("gps", f"Complet.:{statistics['completeness']}%")
-                case _:
-                    ui.set("gps", f"{lat},{long}")
+        match self.ui_counter:
+            case 0 if "info" in self.fields:
+                ui.set("gps", info)
+            case 1:
+                msg = []
+                if "speed" in self.fields:
+                    msg.append(f"Spd:{spd}")
+                if "altitude" in self.fields:
+                    msg.append(f"Alt:{alt}")
+                if msg:
+                    ui.set("gps", " ".join(msg))
+            case 2:
+                statistics = self.get_statistics()
+                ui.set("gps", f"Complet.:{statistics['completeness']}%")
+            case _:
+                ui.set("gps", f"{lat},{long}")
 
     def full_view_mode(self, ui, coords: Position) -> None:
         _, lat, long, alt, spd = coords.format(self.units, self.display_precision)
-        with ui._lock:
-            ui.set("latitude", f"{lat} ")
-            ui.set("longitude", f"{long} ")
-            if "altitude" in self.fields:
-                ui.set("altitude", f"{alt} ")
-            if "speed" in self.fields:
-                ui.set("speed", f"{spd} ")
+        ui.set("latitude", f"{lat} ")
+        ui.set("longitude", f"{long} ")
+        if "altitude" in self.fields:
+            ui.set("altitude", f"{alt} ")
+        if "speed" in self.fields:
+            ui.set("speed", f"{spd} ")
 
     def on_ui_update(self, ui) -> None:
         if not self.is_ready or self.view_mode == "none":
@@ -815,19 +811,18 @@ class GPSD_ng(plugins.Plugin):
 
         self.ui_counter = (self.ui_counter + 1) % 5
         coords = self.gpsd.get_position()
-
         if not self.check_coords(coords):
             self.lost_mode(ui, coords)
             return
-
-        self.display_face(ui, self.face_1, self.face_2)
-        match self.view_mode:
-            case "compact":
-                self.compact_view_mode(ui, coords)
-            case "full":
-                self.full_view_mode(ui, coords)
-            case _:
-                pass
+        with ui._lock:
+            self.display_face(ui, self.face_1, self.face_2)
+            match self.view_mode:
+                case "compact":
+                    self.compact_view_mode(ui, coords)
+                case "full":
+                    self.full_view_mode(ui, coords)
+                case _:
+                    pass
 
     def on_webhook(self, path: str, request) -> str:
         def error(mesg):
