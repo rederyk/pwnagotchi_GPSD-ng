@@ -252,7 +252,7 @@ class GPSD(threading.Thread):
     def configured(self) -> bool:
         return self.gpsdhost and self.gpsdport
 
-    def connect(self) -> None:
+    def connect(self) -> bool:
         with self.lock:
             logging.info(f"[GPSD-ng] Trying to connect to {self.gpsdhost}:{self.gpsdport}")
             try:
@@ -262,9 +262,11 @@ class GPSD(threading.Thread):
                     mode=gps.WATCH_ENABLE | gps.WATCH_NEWSTYLE,
                 )
                 logging.info(f"[GPSD-ng] Connected to {self.gpsdhost}:{self.gpsdport}")
+                return True
             except Exception as e:
                 logging.error(f"[GPSD-ng] Error while connecting to GPSD: {e}")
                 self.session = None
+        return False
 
     # ---------- UPDATE AND CLEAN ----------
     def update(self) -> None:
@@ -316,6 +318,7 @@ class GPSD(threading.Thread):
     # ---------- MAIN LOOP ----------
     def run(self) -> None:
         logging.info(f"[GPSD-ng] Starting loop")
+        sleep_time = 1
         while self.running:
             try:  # force reinit to avoid data mixing between devices
                 self.session.device = None
@@ -327,16 +330,22 @@ class GPSD(threading.Thread):
             if not self.configured:
                 time.sleep(1)
             elif not self.session:
-                self.connect()
+                if self.connect():
+                    sleep_time = 1
+                else:
+                    sleep_time = max(sleep_time * 2, 30)
+                    logging.info(f"[GPS-ng] Going to sleep for {sleep_time}s")
+                    time.sleep(sleep_time)
             elif self.session.read() == 0:
                 self.update()
+                time.sleep(0.05)
             else:
                 logging.debug(
                     "[GPSD-ng] Closing connection to GPSD: {self.gpsdhost}:{self.gpsdport}"
                 )
                 self.session.close()
                 self.session = None
-                time.sleep(1)
+
 
     def join(self, timeout=None) -> None:
         self.running = False
@@ -821,8 +830,11 @@ class GPSD_ng(plugins.Plugin):
                 pass
 
     def on_webhook(self, path: str, request) -> str:
+        def error(mesg):
+            return "<html><head><title>GPSD-ng: Error</title></head><body><code>{mesg}/code></body></html>"
+
         if not self.is_ready:
-            return "<html><head><title>GPSD-ng: Error</title></head><body><code>Plugin not ready</code></body></html>"
+            return error("Plugin not ready")
         match path:
             case None | "/":
                 try:
@@ -834,7 +846,7 @@ class GPSD_ng(plugins.Plugin):
                     )
                 except Exception as e:
                     logging.error(f"[GPSD-ng] Error while rendering template: {e}")
-                    return "<html><head><title>GPSD-ng: Error</title></head><body><code>Rendering error</code></body></html>"
+                    return error("Rendering error")
             case "polar":
                 try:
                     device = request.args["device"]
