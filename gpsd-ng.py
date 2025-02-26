@@ -248,8 +248,7 @@ class GPSD(threading.Thread):
             self.elevation_data = self.elevation_report.data_field_or("elevations", default=dict())
         logging.info(f"[GPSD-ng] {len(self.elevation_data)} locations already in cache")
 
-    @property
-    def configured(self) -> bool:
+    def is_configured(self) -> bool:
         return self.gpsdhost and self.gpsdport
 
     def connect(self) -> bool:
@@ -267,6 +266,9 @@ class GPSD(threading.Thread):
                 logging.error(f"[GPSD-ng] Error while connecting to GPSD: {e}")
                 self.session = None
         return False
+
+    def is_connected(self):
+        return self.session != None
 
     # ---------- UPDATE AND CLEAN ----------
     def update(self) -> None:
@@ -327,7 +329,7 @@ class GPSD(threading.Thread):
                 self.session.fix = gps.gpsfix()
             except AttributeError:
                 pass
-            if not self.configured:
+            if not self.is_configured():
                 time.sleep(1)
             elif not self.session:
                 if self.connect():
@@ -346,7 +348,6 @@ class GPSD(threading.Thread):
                 self.session.close()
                 self.session = None
 
-
     def join(self, timeout=None) -> None:
         self.running = False
         try:
@@ -356,7 +357,7 @@ class GPSD(threading.Thread):
 
     # ---------- POSITION ----------
     def get_position(self) -> Position | None:
-        if not (self.configured and self.positions):
+        if not (self.is_configured() and self.positions):
             return None
         self.clean()
         with self.lock:
@@ -424,7 +425,8 @@ class GPSD(threading.Thread):
 
     def update_cache_elevation(self) -> None:
         if not (
-            self.configured and (datetime.now(tz=UTC) - self.last_elevation).total_seconds() > 60
+            self.is_configured()
+            and (datetime.now(tz=UTC) - self.last_elevation).total_seconds() > 60
         ):
             return
         self.last_elevation = datetime.now(tz=UTC)
@@ -489,7 +491,7 @@ class GPSD_ng(plugins.Plugin):
 
     @property
     def is_ready(self) -> bool:
-        return self.gpsd and self.gpsd.configured
+        return self.gpsd and self.gpsd.is_configured()
 
     # ----------LOAD AND CONFIGURE ----------
     def on_loaded(self) -> None:
@@ -758,14 +760,25 @@ class GPSD_ng(plugins.Plugin):
                 pass
 
     def lost_mode(self, ui, coords: Position) -> None:
-        if self.ui_counter == 1:
-            ui.set("status", "Where am I???")
         self.display_face(ui, self.lost_face_1, self.lost_face_2)
+
+        statistics = self.get_statistics()
+        if not self.gpsd.is_configured():
+            status = "GPSD not configured"
+        elif not self.gpsd.is_connected():
+            status = "GPSD not connected"
+        elif statistics["nb_devices"] == 0:
+            status = "No GPS device found"
+        else:
+            status = "Can't get a location"        
+        ui.set("status", status)
 
         match self.view_mode:
             case "compact":
-                statistics = self.get_statistics()
-                ui.set("gps", f"No GPS Data: {statistics['nb_devices']} dev.")
+                if statistics["nb_devices"] == 0:
+                    ui.set("gps", f"No GPS Device")
+                else:
+                    ui.set("gps", f"No GPS Fix: {statistics['nb_devices']} dev.")
             case "full":
                 for i in ["latitude", "longitude", "altitude", "speed"]:
                     try:
