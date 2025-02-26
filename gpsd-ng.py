@@ -764,7 +764,8 @@ class GPSD_ng(plugins.Plugin):
 
         match self.view_mode:
             case "compact":
-                ui.set("gps", "No GPS Data")
+                statistics = self.get_statistics()
+                ui.set("gps", f"No GPS Data: {statistics['nb_devices']} dev.")
             case "full":
                 for i in ["latitude", "longitude", "altitude", "speed"]:
                     try:

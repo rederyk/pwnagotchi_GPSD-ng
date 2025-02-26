@@ -3,7 +3,7 @@ Use GPSD server to retreive and save coordinates on handshake. Can use mutiple g
 
 ![Front image of pwnagotchi](pwnagotchi.jpeg)
 
-__Advantages__:
+__Advantages with gpsd server__:
 - GPS configuration independant from pwnagotchi
 - Early position polling
 - No position lost on bettercap/pwnagotchi restarts
@@ -15,6 +15,9 @@ __Advantages__:
 
 __Exemple__:\
 GPS module/dongle and/or Phone (IOS/Android) ------> GPSD ------> GPSD-ng ------> Pwnagotchi
+
+# Features
+
 
 # Install
 - Copy gpsd-ng.py and gpsd-ng.html to your custom plugins directory
