@@ -15,6 +15,18 @@
         text-align: center;
     }
 
+    h1.used {
+        color: green;
+    }
+
+    h1.notused {
+        color: blue;
+    }
+
+    h1.nofix {
+        color: orangered;
+    }
+
     table {
         table-layout: auto;
         width: 100%;
@@ -81,35 +93,35 @@
 {% endblock %}
 {% block script %}
 document.addEventListener("DOMContentLoaded", () => {
-    const refreshButtons = document.querySelectorAll('button[id^="refresh_"]');
+const refreshButtons = document.querySelectorAll('button[id^="refresh_"]');
 
-    refreshButtons.forEach(button => {
-        const device = button.dataset.device;
-        const target = button.dataset.target;
-        button.addEventListener("click", async () => {
-            await refreshPolarImage(device, target);
-        });
-    });
+refreshButtons.forEach(button => {
+const device = button.dataset.device;
+const target = button.dataset.target;
+button.addEventListener("click", async () => {
+await refreshPolarImage(device, target);
+});
+});
 });
 
 async function refreshPolarImage(device, target) {
-    const polarImage = document.getElementById(target);
-    if (!polarImage) {
-        console.error("Image element not found");
-        return;
-    }
+const polarImage = document.getElementById(target);
+if (!polarImage) {
+console.error("Image element not found");
+return;
+}
 
-    try {
-        const response = await fetch(`${window.location.origin}/plugins/gpsd-ng/polar?device=`+device);
-        if (response.ok) {
-            const base64Image = await response.text();
-            polarImage.src = `data:image/png;base64,${base64Image}`;
-        } else {
-            console.error("Failed to fetch the image");
-        }
-    } catch (error) {
-        console.error("An error occurred while fetching the image:", error);
-    }
+try {
+const response = await fetch(`${window.location.origin}/plugins/gpsd-ng/polar?device=`+device);
+if (response.ok) {
+const base64Image = await response.text();
+polarImage.src = `data:image/png;base64,${base64Image}`;
+} else {
+console.error("Failed to fetch the image");
+}
+} catch (error) {
+console.error("An error occurred while fetching the image:", error);
+}
 }
 {% endblock %}
 {% block content %}
@@ -121,6 +133,11 @@ async function refreshPolarImage(device, target) {
             {{statistics["completeness"]}}% of completeness<br>
             {{statistics["nb_cached_elevation"]}} cached elevations
     </p>
+    {% if not device in positions %}
+    <p>
+        No device used.
+    </p>
+    {% endif %}
 </div>
 <table id="tableOptions">
     <tr>
@@ -131,9 +148,31 @@ async function refreshPolarImage(device, target) {
     <tr>
         <td>
             {% if positions[dkey] %}
-            <h1>{{positions[dkey].device}}</h1>
+
+            {% if device == dkey %}
+            {% set header_class="used" %}
+            {% set usage_msg="used" %}
+            {% elif positions[dkey].is_fixed() %}
+            {% set header_class="notused" %}
+            {% set usage_msg="not used" %}
+            {% else %}
+            {% set header_class="nofix" %}
+            {% set usage_msg="no fix" %}
+            {% endif %}
+
+            <h1 class="{{header_class}}">{{positions[dkey].device}} ({{usage_msg}})</h1>
             {% set lat_long = positions[dkey].format_lat_long() %}
-            <h2>{{lat_long[0]}}, {{lat_long[1]}} ({{positions[dkey].fix}})</h2>
+            <h2>
+                {% if positions[dkey].is_fixed() %}
+                <a href="https://www.openstreetmap.org/?mlat={{positions[dkey].latitude}}&mlon={{positions[dkey].longitude}}&zoom=18"
+                    target="_blank">
+                    {{lat_long[0]}}, {{lat_long[1]}} ({{positions[dkey].fix}})
+                </a>
+                {% else %}
+                {{lat_long[0]}}, {{lat_long[1]}} ({{positions[dkey].fix}})
+                {% endif %}
+            </h2>
+
             <strong>Altitude</strong>: {{positions[dkey].format_altitude(units)}}, <strong>Speed</strong>:
             {{positions[dkey].format_speed(units)}}<br>
             <strong>Sattelites</strong>: {{positions[dkey].used_satellites}} used/{{positions[dkey].viewed_satellites}}
@@ -146,8 +185,10 @@ async function refreshPolarImage(device, target) {
             {% endif %}
         </td>
         <td>
-            <img id="polar_{{loop.index}}" src="data:image/png;base64,{{positions[dkey].generate_polar_plot()}}" alt="Polar Image for {{dkey}}" aria-label="Polar Image for {{dkey}}"/>
-            <button id="refresh_{{loop.index}}" data-target="polar_{{loop.index}}" data-device="{{dkey}}" aria-label="Refresh Polar Image">Refresh</button>
+            <img id="polar_{{loop.index}}" src="data:image/png;base64,{{positions[dkey].generate_polar_plot()}}"
+                alt="Polar Image for {{dkey}}" aria-label="Polar Image for {{dkey}}" />
+            <button id="refresh_{{loop.index}}" data-target="polar_{{loop.index}}" data-device="{{dkey}}"
+                aria-label="Refresh Polar Image">Refresh</button>
         </td>
     </tr>
     {% endfor %}

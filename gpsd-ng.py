@@ -110,6 +110,9 @@ class Position:
         except TypeError:
             return False
 
+    def is_fixed(self) -> bool:
+        return self.mode >= 2
+
     # ---------- JSON DUMP ----------
     def to_json(self) -> dict:
         return {
@@ -133,7 +136,7 @@ class Position:
         dev = f"{dev[0]}:" if dev else ""
         return f"{dev}{self.fix} ({self.used_satellites}/{self.viewed_satellites} Sats)"
 
-    def format_lat_long(self, display_precision: int = 6) -> str:
+    def format_lat_long(self, display_precision: int = 9) -> str:
         if self.latitude < 0:
             lat = f"{-self.latitude:4.{display_precision}f}S"
         else:
@@ -228,7 +231,6 @@ class GPSD(threading.Thread):
         self.session = None
         self.positions = dict()  # Device:Position dictionnary
         self.main_device = None
-        self.last_position = None
         self.elevation_data = dict()
         self.last_clean = datetime.now(tz=UTC)
         self.elevation_report = None
@@ -305,17 +307,10 @@ class GPSD(threading.Thread):
         self.last_clean = datetime.now(tz=UTC)
         logging.debug(f"[GPSD-ng] Start cleaning")
         with self.lock:
-            positions_to_clean = []
-            for device in filter(lambda x: self.positions[x], self.positions):
+            for device in self.positions:
                 if self.positions[device].is_old():
-                    positions_to_clean.append(device)
-            for device in positions_to_clean:
-                self.positions[device] = Position(device=device)
-                logging.debug(f"[GPSD-ng] Cleaning {device}")
-
-            if self.last_position and self.last_position.is_old(120):
-                self.last_position = None
-                logging.debug(f"[GPSD-ng] Cleaning last position")
+                    self.positions[device] = Position(device=device)
+                    logging.info(f"[GPSD-ng] Cleaning {device}")
 
     # ---------- MAIN LOOP ----------
     def run(self) -> None:
@@ -329,6 +324,7 @@ class GPSD(threading.Thread):
                 self.session.fix = gps.gpsfix()
             except AttributeError:
                 pass
+            self.clean()
             if not self.is_configured():
                 time.sleep(1)
             elif not self.session:
@@ -338,7 +334,9 @@ class GPSD(threading.Thread):
                     logging.info(f"[GPS-ng] Going to sleep for {sleep_time}s")
                     sleep_time = min(sleep_time * 2, 30)
                     begin = datetime.now(tz=UTC)
-                    while self.running and (datetime.now(tz=UTC) - begin).total_seconds() < sleep_time:
+                    while (
+                        self.running and (datetime.now(tz=UTC) - begin).total_seconds() < sleep_time
+                    ):
                         time.sleep(1)
             elif self.session.read() == 0:
                 self.update()
@@ -358,25 +356,31 @@ class GPSD(threading.Thread):
             logging.error(f"[GPSD-ng] Error on join(): {e}")
 
     # ---------- POSITION ----------
-    def get_position(self) -> Position | None:
-        if not (self.is_configured() and self.positions):
+    def get_position_device(self):
+        if not self.is_configured():
             return None
-        self.clean()
         with self.lock:
-            try:
-                if self.main_device and self.positions[self.main_device].is_set():
-                    return self.positions[self.main_device]
-            except KeyError:
-                pass
+            if self.main_device:
+                try:
+                    if self.positions[self.main_device].is_set():
+                        return self.main_device
+                except KeyError:
+                    pass
 
             # Fallback
-            # Filter devices without coords and sort by best positionning and most recent
-            positions = sorted(filter(lambda x: x.is_set(), self.positions.values()))
             try:
-                self.last_position = positions[0]  # Get first and best element
+                # Filter devices without coords and sort by best positionning/most recent
+                dev_pos = filter(lambda x: x[1].is_set(), self.positions.items())
+                dev_pos = sorted(dev_pos, key=lambda x: x[1], reverse=True)
+                return dev_pos[0]  # Get first and best element
             except IndexError:
-                logging.debug(f"[GPSD-ng] No data, using last position: {self.last_position}")
-            return self.last_position
+                logging.info(f"[GPSD-ng] No valid position")
+            return None
+
+    def get_position(self) -> Position | None:
+        if device := self.get_position_device():
+            return self.positions[device]
+        return None
 
     # ---------- OPEN ELEVATION CACHE ----------
     @staticmethod
@@ -404,7 +408,7 @@ class GPSD(threading.Thread):
             logging.info("[GPSD-ng] Saving elevation cache")
             self.elevation_report.update(data={"elevations": self.elevation_data})
 
-    def calculate_locations(self, max_dist: int = 100) -> list[tuple[float, float]] | None:
+    def calculate_locations(self, max_dist: int = 100) -> list[tuple[float, float]]:
         locations = list()
 
         def append_location(latitude: float, longitude: float) -> None:
@@ -413,9 +417,9 @@ class GPSD(threading.Thread):
                 locations.append({"latitude": lat, "longitude": long})
 
         if not (coords := self.get_position()):
-            return None
-        if coords.mode > 2:  # No cache if we have a good Fix
-            return None
+            return []
+        if coords.mode != 2:  # No cache if we have a no fix or good Fix
+            return []
         append_location(coords.latitude, coords.longitude)
         center = self.round_position(coords.latitude, coords.longitude)
         for dist in range(10, max_dist + 1, 10):
@@ -465,7 +469,7 @@ class GPSD_ng(plugins.Plugin):
     __name__ = "GPSD-ng"
     __GitHub__ = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
     __author__ = "@fmatray"
-    __version__ = "1.6.2"
+    __version__ = "1.6.5"
     __license__ = "GPL3"
     __description__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
     __help__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
@@ -772,7 +776,7 @@ class GPSD_ng(plugins.Plugin):
         elif statistics["nb_devices"] == 0:
             status = "No GPS device found"
         else:
-            status = "Can't get a location"        
+            status = "Can't get a location"
         ui.set("status", status)
 
         match self.view_mode:
@@ -827,10 +831,10 @@ class GPSD_ng(plugins.Plugin):
 
         self.ui_counter = (self.ui_counter + 1) % 5
         coords = self.gpsd.get_position()
-        with ui._lock: 
+        with ui._lock:
             if not self.check_coords(coords):
                 self.lost_mode(ui, coords)
-                return        
+                return
             self.display_face(ui, self.face_1, self.face_2)
             match self.view_mode:
                 case "compact":
@@ -842,7 +846,7 @@ class GPSD_ng(plugins.Plugin):
 
     def on_webhook(self, path: str, request) -> str:
         def error(mesg):
-            return "<html><head><title>GPSD-ng: Error</title></head><body><code>{mesg}/code></body></html>"
+            return f"<html><head><title>GPSD-ng: Error</title></head><body><code>{mesg}</code></body></html>"
 
         if not self.is_ready:
             return error("Plugin not ready")
@@ -851,6 +855,7 @@ class GPSD_ng(plugins.Plugin):
                 try:
                     return render_template_string(
                         self.template,
+                        device=self.gpsd.get_position_device(),
                         positions=self.gpsd.positions,
                         units=self.units,
                         statistics=self.get_statistics(),
