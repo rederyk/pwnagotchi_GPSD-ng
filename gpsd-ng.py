@@ -335,7 +335,7 @@ class GPSD(threading.Thread):
                 if self.connect():
                     sleep_time = 1
                 else:
-                    sleep_time = max(sleep_time * 2, 30)
+                    sleep_time = min(sleep_time * 2, 30)
                     logging.info(f"[GPS-ng] Going to sleep for {sleep_time}s")
                     time.sleep(sleep_time)
             elif self.session.read() == 0:
@@ -463,7 +463,7 @@ class GPSD_ng(plugins.Plugin):
     __name__ = "GPSD-ng"
     __GitHub__ = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
     __author__ = "@fmatray"
-    __version__ = "1.6.1"
+    __version__ = "1.6.2"
     __license__ = "GPL3"
     __description__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
     __help__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
@@ -825,10 +825,10 @@ class GPSD_ng(plugins.Plugin):
 
         self.ui_counter = (self.ui_counter + 1) % 5
         coords = self.gpsd.get_position()
-        if not self.check_coords(coords):
-            self.lost_mode(ui, coords)
-            return
-        with ui._lock:
+        with ui._lock: 
+            if not self.check_coords(coords):
+                self.lost_mode(ui, coords)
+                return        
             self.display_face(ui, self.face_1, self.face_2)
             match self.view_mode:
                 case "compact":
