@@ -335,9 +335,11 @@ class GPSD(threading.Thread):
                 if self.connect():
                     sleep_time = 1
                 else:
-                    sleep_time = min(sleep_time * 2, 30)
                     logging.info(f"[GPS-ng] Going to sleep for {sleep_time}s")
-                    time.sleep(sleep_time)
+                    sleep_time = min(sleep_time * 2, 30)
+                    begin = datetime.now(tz=UTC)
+                    while self.running and (datetime.now(tz=UTC) - begin).total_seconds() < sleep_time:
+                        time.sleep(1)
             elif self.session.read() == 0:
                 self.update()
                 time.sleep(0.05)
