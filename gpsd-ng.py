@@ -48,7 +48,7 @@ import json
 import geopy.distance
 import geopy.units
 import requests
-from flask import render_template_string, abort
+from flask import render_template_string, render_template
 
 import pwnagotchi.plugins as plugins
 import pwnagotchi.ui.fonts as fonts
@@ -845,8 +845,8 @@ class GPSD_ng(plugins.Plugin):
                     pass
 
     def on_webhook(self, path: str, request) -> str:
-        def error(mesg):
-            return f"<html><head><title>GPSD-ng: Error</title></head><body><code>{mesg}</code></body></html>"
+        def error(message):
+            return render_template("status.html", title="Error", go_back_after=10, message=message)
 
         if not self.is_ready:
             return error("Plugin not ready")
@@ -868,6 +868,6 @@ class GPSD_ng(plugins.Plugin):
                     device = request.args["device"]
                     return self.gpsd.positions[device].generate_polar_plot()
                 except KeyError:
-                    return ""
+                    return error("Rendering with polar image")
             case _:
-                return ""
+                return error("Unkown path")
