@@ -60,7 +60,7 @@ from pwnagotchi.utils import StatusFile
 @dataclass
 class Position:
     DATE_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
-    FIXES = {0: "No value", 1: "No fix", 2: "2D fix", 3: "3D fix"}
+    FIXES = {0: "No data", 1: "No fix", 2: "2D fix", 3: "3D fix"}
 
     latitude: float = 0
     longitude: float = 0
@@ -95,8 +95,6 @@ class Position:
             self.accuracy = fix.sep
 
     def update_satellites(self, satellites: list[gps.gpsdata.satellite]) -> None:
-        if self.mode < 2:
-            self.mode, self.fix = 1, self.FIXES[1]
         self.satellites = deepcopy(satellites)
         self.viewed_satellites = len(satellites)
         self.used_satellites = len([s for s in satellites if s.used])
@@ -104,7 +102,7 @@ class Position:
     def is_set(self) -> bool:
         return self.latitude or self.longitude
 
-    def is_old(self, max_seconds: int = 90) -> bool:
+    def is_old(self, max_seconds: int) -> bool:
         try:
             return (datetime.now(tz=UTC) - self.date).total_seconds() > max_seconds
         except TypeError:
@@ -228,6 +226,7 @@ class GPSD(threading.Thread):
         super().__init__()
         self.gpsdhost = None
         self.gpsdport = None
+        self.position_timeout = 120
         self.session = None
         self.positions = dict()  # Device:Position dictionnary
         self.main_device = None
@@ -240,10 +239,17 @@ class GPSD(threading.Thread):
 
     # ---------- CONFIGURE AND CONNECTION ----------
     def configure(
-        self, gpsdhost: str, gpsdport: int, main_device: str, cache_file: str, save_elevations: str
+        self,
+        gpsdhost: str,
+        gpsdport: int,
+        position_timeout: int,
+        main_device: str,
+        cache_file: str,
+        save_elevations: str,
     ) -> None:
         self.gpsdhost = gpsdhost
         self.gpsdport = gpsdport
+        self.position_timeout = position_timeout
         self.main_device = main_device
         if save_elevations:
             self.elevation_report = StatusFile(cache_file, data_format="json")
@@ -302,13 +308,15 @@ class GPSD(threading.Thread):
             self.positions[self.session.device].update_fix(self.session.fix)
 
     def clean(self) -> None:
+        if not self.position_timeout:
+            return
         if (datetime.now(tz=UTC) - self.last_clean).total_seconds() < 10:
             return
         self.last_clean = datetime.now(tz=UTC)
         logging.debug(f"[GPSD-ng] Start cleaning")
         with self.lock:
             for device in self.positions:
-                if self.positions[device].is_old():
+                if self.positions[device].is_old(self.position_timeout):
                     self.positions[device] = Position(device=device)
                     logging.info(f"[GPSD-ng] Cleaning {device}")
 
@@ -372,15 +380,17 @@ class GPSD(threading.Thread):
                 # Filter devices without coords and sort by best positionning/most recent
                 dev_pos = filter(lambda x: x[1].is_set(), self.positions.items())
                 dev_pos = sorted(dev_pos, key=lambda x: x[1], reverse=True)
-                return dev_pos[0]  # Get first and best element
+                return dev_pos[0][0]  # Get first and best element
             except IndexError:
-                logging.info(f"[GPSD-ng] No valid position")
+                logging.debug(f"[GPSD-ng] No valid position")
             return None
 
     def get_position(self) -> Position | None:
-        if device := self.get_position_device():
-            return self.positions[device]
-        return None
+        try:
+            if device := self.get_position_device():
+                return self.positions[device]
+        except KeyError:
+            return None
 
     # ---------- OPEN ELEVATION CACHE ----------
     @staticmethod
@@ -469,7 +479,7 @@ class GPSD_ng(plugins.Plugin):
     __name__ = "GPSD-ng"
     __GitHub__ = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
     __author__ = "@fmatray"
-    __version__ = "1.6.5"
+    __version__ = "1.6.6"
     __license__ = "GPL3"
     __description__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
     __help__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
@@ -533,6 +543,7 @@ class GPSD_ng(plugins.Plugin):
         self.gpsdhost = self.options.get("gpsdhost", "127.0.0.1")
         self.gpsdport = int(self.options.get("gpsdport", 2947))
         self.main_device = self.options.get("main_device", None)
+        self.position_timeout = self.options.get("position_timeout", 120)
         self.use_open_elevation = self.options.get("use_open_elevation", True)
         self.save_elevations = self.options.get("save_elevations", True)
         self.units = self.options.get("units", "metric").lower()
@@ -552,6 +563,7 @@ class GPSD_ng(plugins.Plugin):
             self.gpsdhost,
             self.gpsdport,
             self.main_device,
+            self.position_timeout,
             os.path.join(self.handshake_dir, ".elevations"),
             self.save_elevations,
         )

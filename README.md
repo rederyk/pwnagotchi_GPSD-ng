@@ -65,10 +65,11 @@ GPSD_OPTIONS="-n" # add -D3 if you need to debug
 main.plugins.gpsd.enabled = true
 
 # Options with default settings.
-# Don't add if you don't need customisation
+# Add only if you need customisation
 main.plugins.gpsd-ng.gpsdhost = "127.0.0.1"
 main.plugins.gpsd-ng.gpsdport = 2947
 main.plugins.gpsd-ng.main_device = "/dev/ttyS0" # if not provided, the puglin will try to retreive the most accurate position
+main.plugins.gpsd-ng.position_timeout = 120 # default 120, Delay without update before cleaning the position. 0 = no timeout
 main.plugins.gpsd-ng.use_open_elevation = true # if true, use open-elevation API to retreive missing altitudes. Use it if you have a poor GPS signal.
 main.plugins.gpsd-ng.save_elevations = true # if true, elevations cache will be saved to disk. Be carefull as it can grow fast if move a lot.
 main.plugins.gpsd-ng.view_mode = "compact" # "compact", "full", "none" 
@@ -96,6 +97,9 @@ If the main device is not available, it will fallback to other devices.
 
 If the device can only get 2D positions for some reason (poor signal, wrong device orientation, bad luck, etc.), the plugin can use open-elevation API to try to ask current altitude.
 To avoid many call to the API, each request asks for points every ~10m around you, in a diameter of 200m. This cache can be saved to disk.
+
+After a delay (set by position_timeout) without data update for a device, the position will be cleaned.  
+If position_timeout is set to 0, positions never expire. Usefull for keeping last position when goind indoor.
 
 ## Improve positioning with RTCM (need gpsd 3.25)
 If you have a GPs module or dongle with RTCM capabilities, you can activate with GPSD.
