@@ -364,7 +364,7 @@ class GPSD(threading.Thread):
             logging.error(f"[GPSD-ng] Error on join(): {e}")
 
     # ---------- POSITION ----------
-    def get_position_device(self):
+    def get_position_device(self) -> str:
         if not self.is_configured():
             return None
         with self.lock:
