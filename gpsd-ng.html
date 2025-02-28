@@ -175,10 +175,20 @@ console.error("An error occurred while fetching the image:", error);
 
             <strong>Altitude</strong>: {{positions[dkey].format_altitude(units)}}, <strong>Speed</strong>:
             {{positions[dkey].format_speed(units)}}<br>
+
             <strong>Sattelites</strong>: {{positions[dkey].used_satellites}} used/{{positions[dkey].viewed_satellites}}
             viewed<br>
-            <strong>Date</strong>: {% if positions[dkey].date %}{{positions[dkey].date.strftime('%d/%m/%Y %H:%M:%S
-            %Z')}}{% else %}No date{% endif %}<br>
+
+            <strong>Last fix</strong>:
+            {% if positions[dkey].last_fix %}{{positions[dkey].last_fix.strftime('%d/%m/%Y %H:%M:%S% Z')}}
+            ({{positions[dkey].last_fix_ago}}s ago)
+            {% else %}No date{% endif %}<br>
+
+            <strong>Last update</strong>:
+            {% if positions[dkey].last_update %}{{positions[dkey].last_update.strftime('%d/%m/%Y %H:%M:%S% Z')}}
+            ({{positions[dkey].last_update_ago}}s ago)
+            {% else %}No date{% endif %}<br>
+
             <strong>Accuracy</strong>: {{positions[dkey].accuracy}}<br>
             {% else %}
             <strong>No data</strong>
