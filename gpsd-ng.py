@@ -375,6 +375,7 @@ class GPSD(threading.Thread):
                 )
                 self.session.close()
                 self.session = None
+
     def run(self) -> None:
         try:
             self.loop()
@@ -419,7 +420,7 @@ class GPSD(threading.Thread):
         except KeyError:
             pass
         try:
-            if self.last_position.is_fix_old(60 * 5):
+            if self.fix_timeout and self.last_position.is_fix_old(self.fix_timeout):
                 self.last_position = None
         except AttributeError:
             pass
