@@ -180,12 +180,12 @@ console.error("An error occurred while fetching the image:", error);
             viewed<br>
 
             <strong>Last fix</strong>:
-            {% if positions[dkey].last_fix %}{{positions[dkey].last_fix.strftime('%d/%m/%Y %H:%M:%S% Z')}}
+            {% if positions[dkey].last_fix %}{{positions[dkey].last_fix.strftime('%d/%m/%Y %H:%M:%S %Z')}}
             ({{positions[dkey].last_fix_ago}}s ago)
             {% else %}No date{% endif %}<br>
 
             <strong>Last update</strong>:
-            {% if positions[dkey].last_update %}{{positions[dkey].last_update.strftime('%d/%m/%Y %H:%M:%S% Z')}}
+            {% if positions[dkey].last_update %}{{positions[dkey].last_update.strftime('%d/%m/%Y %H:%M:%S %Z')}}
             ({{positions[dkey].last_update_ago}}s ago)
             {% else %}No date{% endif %}<br>
 
