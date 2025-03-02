@@ -36,6 +36,7 @@ import json
 import logging
 import re
 import os
+import subprocess
 from glob import glob
 from dataclasses import dataclass, field
 from typing import Self, Any
@@ -75,6 +76,26 @@ class Position:
     device: str = ""
     accuracy: float = 0
 
+    @property
+    def viewed_satellites(self) -> int:
+        return len(self.satellites)
+
+    @property
+    def used_satellites(self) -> int:
+        return len([s for s in self.satellites if s.used])
+
+    @property
+    def fix(self) -> str:
+        return self.FIXES.get(self.mode, "Mode error")
+
+    @property
+    def last_update_ago(self) -> int:
+        return round((datetime.now(tz=UTC) - self.last_update).total_seconds())
+
+    @property
+    def last_fix_ago(self) -> int:
+        return round((datetime.now(tz=UTC) - self.last_fix).total_seconds())
+
     def __lt__(self, other: Self) -> bool:
         try:
             return (self.mode, -self.last_fix.timestamp()) < (
@@ -104,26 +125,7 @@ class Position:
         self.altitude = altitude
         self.cached_altitude = cached
 
-    @property
-    def viewed_satellites(self) -> int:
-        return len(self.satellites)
-
-    @property
-    def used_satellites(self) -> int:
-        return len([s for s in self.satellites if s.used])
-
-    @property
-    def fix(self) -> str:
-        return self.FIXES.get(self.mode, "Mode error")
-
-    @property
-    def last_update_ago(self) -> int:
-        return round((datetime.now(tz=UTC) - self.last_update).total_seconds())
-
-    @property
-    def last_fix_ago(self) -> int:
-        return round((datetime.now(tz=UTC) - self.last_fix).total_seconds())
-
+    # ---------- VALIDATION/TIME ----------
     def is_valid(self) -> bool:
         return gps.isfinite(self.latitude) and gps.isfinite(self.longitude) and self.mode >= 2
 
@@ -294,6 +296,17 @@ class GPSD(threading.Thread):
     def is_configured(self) -> bool:
         return self.gpsdhost and self.gpsdport
 
+    def restart_gpsd(self):
+        try:
+            subprocess.run(
+                ["systemctl", "restart", "gpsd"],
+                check=True,
+                timeout=20,
+            )
+            logging.info(f"[GPSD-ng] GPSD restarted")
+        except Exception as exp:
+            logging.error(f"[GPSD-ng] Error while restarting gpsd: {exp}")
+
     def connect(self) -> bool:
         with self.lock:
             logging.info(f"[GPSD-ng] Trying to connect to {self.gpsdhost}:{self.gpsdport}")
@@ -377,6 +390,7 @@ class GPSD(threading.Thread):
                 self.session = None
 
     def run(self) -> None:
+        self.restart_gpsd()
         try:
             self.loop()
         except Exception as exp:
@@ -633,10 +647,6 @@ class GPSD_ng(plugins.Plugin):
                     pass
 
     # ---------- UPDATES ----------
-    @staticmethod
-    def check_coords(coords: Position) -> bool:
-        return coords and coords.is_valid()
-
     def update_bettercap_gps(self, agent, coords: Position) -> None:
         try:
             agent.run(f"set gps.set {coords.latitude} {coords.longitude}")
@@ -649,8 +659,7 @@ class GPSD_ng(plugins.Plugin):
         if self.use_open_elevation:
             self.gpsd.update_cache_elevation()
 
-        coords = self.gpsd.get_position()
-        if not self.check_coords(coords):
+        if not (coords := self.gpsd.get_position()):
             return
         self.update_bettercap_gps(agent, coords)
 
@@ -666,8 +675,7 @@ class GPSD_ng(plugins.Plugin):
     def on_unfiltered_ap_list(self, agent, aps) -> None:
         if not self.is_ready:
             return
-        coords = self.gpsd.get_position()
-        if not self.check_coords(coords):
+        if not (coords := self.gpsd.get_position()):
             return
         self.update_bettercap_gps(agent, coords)
         for ap in aps:  # Complete pcap files with missing gps.json
@@ -696,8 +704,7 @@ class GPSD_ng(plugins.Plugin):
     def on_handshake(self, agent, filename: str, access_point, client_station) -> None:
         if not self.is_ready:
             return
-        coords = self.gpsd.get_position()
-        if not self.check_coords(coords):
+        if not (coords := self.gpsd.get_position()):
             logging.info("[GPSD-ng] not saving GPS: no fix")
             return
         self.update_bettercap_gps(agent, coords)
@@ -880,9 +887,8 @@ class GPSD_ng(plugins.Plugin):
         self.last_ui_update = datetime.now(tz=UTC)
 
         self.ui_counter = (self.ui_counter + 1) % 5
-        coords = self.gpsd.get_position()
         with ui._lock:
-            if not self.check_coords(coords):
+            if not (coords := self.gpsd.get_position()):
                 self.lost_mode(ui, coords)
                 return
             self.display_face(ui, self.face_1, self.face_2)
@@ -906,7 +912,7 @@ class GPSD_ng(plugins.Plugin):
                     return render_template_string(
                         self.template,
                         device=self.gpsd.get_position_device(),
-                        positions=self.gpsd.positions,
+                        positions=deepcopy(self.gpsd.positions),
                         units=self.units,
                         statistics=self.get_statistics(),
                     )
@@ -919,5 +925,8 @@ class GPSD_ng(plugins.Plugin):
                     return self.gpsd.positions[device].generate_polar_plot()
                 except KeyError:
                     return error("Rendering with polar image")
+            case "retart_gpsd":
+                self.gpsd.restart_gpsd()
+                return "Done"
             case _:
                 return error("Unkown path")
