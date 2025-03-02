@@ -16,17 +16,10 @@ __Advantages with gpsd server__:
 __Exemple__:\
 GPS module/dongle and/or Phone (IOS/Android) ------> GPSD ------> GPSD-ng ------> Pwnagotchi
 
-# Features
-
-
-# Install
-- Copy gpsd-ng.py and gpsd-ng.html to your custom plugins directory
-- Install gpsd:
+# Install GPSD server
+- Install binaries and lib:
   - "apt-get install gpsd gpsd-clients python3-gps python3-geopy" or compile from gpsd repository
   - Be sure to have the native gpsd python library installed (python3-gps)
-- Check in raspi-config -> Interface Options -> Serial Port:
-  - __Disable__ Serial Port login
-  - __Enable__ Serial Port 
 - Configure GPSD (/etc/default/gpsd) and uncomment one DEVICES:
 ```
 # Default settings for the gpsd init script and the hotplug wrapper.
@@ -35,19 +28,30 @@ GPS module/dongle and/or Phone (IOS/Android) ------> GPSD ------> GPSD-ng ------
 START_DAEMON="true"
 
 # Use USB hotplugging to add new USB devices automatically to the daemon
-USBAUTO="false"
+USBAUTO="false" 
 
 # Devices gpsd should collect to at boot time.
 # They need to be read/writeable, either by user gpsd or the group dialout.
-# DEVICES="-s BAUDRATE /dev/ttyS0" # GPS module only
-# DEVICES="tcp://PHONEIP:4352" # Phone only over BT tether
-# DEVICES="-s BAUDRATE /dev/ttyS0 tcp://PHONEIP:4352" # GPS module + phone
+DEVICES=""
 
 # Other options you want to pass to gpsd
 GPSD_OPTIONS="-n" # add -D3 if you need to debug
 ```
-- If you use a phone:
-  - Setup bt-tether and check you can ping your phone
+
+## Serial GPS
+- Check in raspi-config -> Interface Options -> Serial Port:
+  - __Disable__ Serial Port login
+  - __Enable__ Serial Port 
+- Check your gps baudrate.
+- Set ```DEVICES="-s BAUDRATE /dev/ttyS0"``` in /etc/default/gpsd
+
+## USB GPS
+- Set ```USBAUTO="true"``` in /etc/default/gpsd
+- No need to set DEVICES
+
+## Phone GPS
+- On your phone:
+  - Setup the plugin bt-tether and check you can ping your phone
   - Install a GPS app:
     - __Android__(not tested):
       - BlueNMEA: https://github.com/MaxKellermann/BlueNMEA
@@ -58,9 +62,17 @@ GPSD_OPTIONS="-n" # add -D3 if you need to debug
       - Set "Network selection" -> "Hotspot"
     - Both cases activate GGA messages to have "3D fix"
 - Check your gpsd configuration with gpsmon or cgps
-- Copy gpsd-ng.py into your custom plugin directory and configure
+- Set ```DEVICES="tcp://PHONEIP:4352"``` in /etc/default/gpsd
 
-# Config.toml
+## Multiple devices
+You can configure several devices in DEVICES  
+Ex: ```DEVICES="-s BAUDRATE /dev/ttyS0 tcp://PHONEIP:4352"```
+
+# Install plugin
+
+- Copy gpsd-ng.py and gpsd-ng.html to your custom plugins directory
+
+# Configure plugin (Config.toml)
 ```
 main.plugins.gpsd.enabled = true
 
