@@ -92,6 +92,7 @@
 </style>
 {% endblock %}
 {% block script %}
+// Add events 
 document.addEventListener("DOMContentLoaded", () => {
 const refreshButtons = document.querySelectorAll('button[id^="refresh_"]');
 
@@ -102,15 +103,20 @@ button.addEventListener("click", async () => {
 await refreshPolarImage(device, target);
 });
 });
+
+const restart_gpsd = document.querySelector('#restart_gpsd');
+restart_gpsd.addEventListener("click", async () => {
+await restartGPSD();
+});
 });
 
+// Refresh polar Image
 async function refreshPolarImage(device, target) {
 const polarImage = document.getElementById(target);
 if (!polarImage) {
 console.error("Image element not found");
 return;
 }
-
 try {
 const response = await fetch(`${window.location.origin}/plugins/gpsd-ng/polar?device=`+device);
 if (response.ok) {
@@ -123,6 +129,22 @@ console.error("Failed to fetch the image");
 console.error("An error occurred while fetching the image:", error);
 }
 }
+
+
+// Restart GPSD
+async function restartGPSD() {
+try {
+const response = await fetch(`${window.location.origin}/plugins/gpsd-ng/retart_gpsd`);
+if (response.ok) {
+console.info("GPSD restarted");
+} else {
+console.error("Failed to restart GPSD");
+}
+} catch (error) {
+console.error("An error occurred while retstarting GPSD:", error);
+}
+}
+
 {% endblock %}
 {% block content %}
 <div class="statistics">
@@ -138,6 +160,9 @@ console.error("An error occurred while fetching the image:", error);
         No device used.
     </p>
     {% endif %}
+</div>
+<div>
+    <button id="restart_gpsd" aria-label="Restart GPSD server">Restart GPSD server</button>
 </div>
 <table id="tableOptions">
     <tr>
