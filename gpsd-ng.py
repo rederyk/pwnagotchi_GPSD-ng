@@ -129,11 +129,10 @@ class Position:
     def is_valid(self) -> bool:
         return gps.isfinite(self.latitude) and gps.isfinite(self.longitude) and self.mode >= 2
 
-    def is_old(self, date: datetime, max_seconds: int) -> bool:
-        try:
-            return (datetime.now(tz=UTC) - date).total_seconds() > max_seconds
-        except TypeError:
-            return False
+    def is_old(self, date: datetime|None, max_seconds: int) -> bool:
+        if not date:
+            return None
+        return (datetime.now(tz=UTC) - date).total_seconds() > max_seconds
 
     def is_update_old(self, max_seconds: int) -> bool:
         return self.is_old(self.last_update, max_seconds)
@@ -281,7 +280,7 @@ class GPSD(threading.Thread):
         fix_timeout: int,
         main_device: str,
         cache_file: str,
-        save_elevations: str,
+        save_elevations: bool,
     ) -> None:
         self.gpsdhost = gpsdhost
         self.gpsdport = gpsdport
@@ -354,7 +353,7 @@ class GPSD(threading.Thread):
         if (datetime.now(tz=UTC) - self.last_clean).total_seconds() < 10:
             return
         self.last_clean = datetime.now(tz=UTC)
-        logging.debug(f"[GPSD-ng] Start cleaning")
+        logging.info(f"[GPSD-ng] Start cleaning")
         with self.lock:
             for device in list(self.positions.keys()):
                 if self.positions[device].is_update_old(self.update_timeout):
@@ -592,16 +591,16 @@ class GPSD_ng(plugins.Plugin):
         gpsdhost = self.options.get("gpsdhost", "127.0.0.1")
         gpsdport = int(self.options.get("gpsdport", 2947))
         main_device = self.options.get("main_device", None)
-        update_timeout = self.options.get("update_timeout", 120)
+        update_timeout = self.options.get("update_timeout", 30)
         fix_timeout = self.options.get("fix_timeout", 300)
         self.use_open_elevation = self.options.get("use_open_elevation", True)
         save_elevations = self.options.get("save_elevations", True)
         self.gpsd.configure(
             gpsdhost,
             gpsdport,
-            main_device,
             update_timeout,
             fix_timeout,
+            main_device,
             os.path.join(self.handshake_dir, ".elevations"),
             save_elevations,
         )
