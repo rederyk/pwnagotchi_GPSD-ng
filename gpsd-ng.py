@@ -129,7 +129,7 @@ class Position:
     def is_valid(self) -> bool:
         return gps.isfinite(self.latitude) and gps.isfinite(self.longitude) and self.mode >= 2
 
-    def is_old(self, date: datetime|None, max_seconds: int) -> bool:
+    def is_old(self, date: datetime | None, max_seconds: int) -> bool:
         if not date:
             return None
         return (datetime.now(tz=UTC) - date).total_seconds() > max_seconds
@@ -258,8 +258,8 @@ class GPSD(threading.Thread):
         super().__init__()
         self.gpsdhost = None
         self.gpsdport = None
-        self.update_timeout = 120
         self.fix_timeout = 120
+        self.update_timeout = 120
         self.session = None
         self.positions = dict()  # Device:Position dictionnary
         self.main_device = None
@@ -276,16 +276,16 @@ class GPSD(threading.Thread):
         self,
         gpsdhost: str,
         gpsdport: int,
-        update_timeout: int,
         fix_timeout: int,
+        update_timeout: int,
         main_device: str,
         cache_file: str,
         save_elevations: bool,
     ) -> None:
         self.gpsdhost = gpsdhost
         self.gpsdport = gpsdport
-        self.update_timeout = update_timeout
         self.fix_timeout = fix_timeout
+        self.update_timeout = update_timeout
         self.main_device = main_device
         if save_elevations:
             self.elevation_report = StatusFile(cache_file, data_format="json")
@@ -353,7 +353,6 @@ class GPSD(threading.Thread):
         if (datetime.now(tz=UTC) - self.last_clean).total_seconds() < 10:
             return
         self.last_clean = datetime.now(tz=UTC)
-        logging.info(f"[GPSD-ng] Start cleaning")
         with self.lock:
             for device in list(self.positions.keys()):
                 if self.positions[device].is_update_old(self.update_timeout):
@@ -591,15 +590,20 @@ class GPSD_ng(plugins.Plugin):
         gpsdhost = self.options.get("gpsdhost", "127.0.0.1")
         gpsdport = int(self.options.get("gpsdport", 2947))
         main_device = self.options.get("main_device", None)
-        update_timeout = self.options.get("update_timeout", 30)
-        fix_timeout = self.options.get("fix_timeout", 300)
+        fix_timeout = self.options.get("fix_timeout", 120)
+        update_timeout = self.options.get("update_timeout", 120)
+        if update_timeout < fix_timeout:
+            logging.error(f"[GPSD-ng] 'update_timeout' cannot be lesser than 'fix_timeout'.")
+            logging.error(f"[GPSD-ng] Setting 'update_timeout' to 'fix_timeout'.")
+            update_timeout = fix_timeout
+
         self.use_open_elevation = self.options.get("use_open_elevation", True)
         save_elevations = self.options.get("save_elevations", True)
         self.gpsd.configure(
             gpsdhost,
             gpsdport,
-            update_timeout,
             fix_timeout,
+            update_timeout,
             main_device,
             os.path.join(self.handshake_dir, ".elevations"),
             save_elevations,
