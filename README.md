@@ -82,7 +82,7 @@ main.plugins.gpsd-ng.gpsdhost = "127.0.0.1"
 main.plugins.gpsd-ng.gpsdport = 2947
 main.plugins.gpsd-ng.main_device = "/dev/ttyS0" # if not provided, the puglin will try to retreive the most accurate position
 main.plugins.gpsd-ng.update_timeout = 120 # default 120, Delay without update before deleting the position. 0 = no timeout
-main.plugins.gpsd-ng.fix_timeout = 300 # default 300, Delay without fix before deleting the position. 0 = no timeout
+main.plugins.gpsd-ng.fix_timeout = 120 # default 120, Delay without fix before deleting the position. 0 = no timeout
 main.plugins.gpsd-ng.use_open_elevation = true # if true, use open-elevation API to retreive missing altitudes. Use it if you have a poor GPS signal.
 main.plugins.gpsd-ng.save_elevations = true # if true, elevations cache will be saved to disk. Be carefull as it can grow fast if move a lot.
 main.plugins.gpsd-ng.view_mode = "compact" # "compact", "full", "none" 
