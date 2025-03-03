@@ -66,7 +66,6 @@ class Position:
     latitude: float = 0
     longitude: float = 0
     altitude: float = 0
-    cached_altitude: bool = None
     speed: float = 0
     last_update: datetime = None
     last_fix: datetime = None
@@ -111,8 +110,7 @@ class Position:
             setattr(self, attr, value)
             self.last_update = datetime.now(tz=UTC)  # Don't use fix.time cause it's not reliable
 
-    def update(self, fix: gps.gpsfix, satellites: list[gps.gpsdata.satellite], valid: int) -> None:
-        self.set_attr("satellites", satellites, valid, gps.SATELLITE_SET)
+    def update_fix(self, fix: gps.gpsfix, valid: int) -> None:
         self.set_attr("latitude", fix.latitude, valid, gps.LATLON_SET)
         self.set_attr("longitude", fix.longitude, valid, gps.LATLON_SET)
         self.set_attr("speed", fix.speed, valid, gps.SPEED_SET)
@@ -121,9 +119,11 @@ class Position:
             self.last_fix = datetime.now(tz=UTC)  # Don't use fix.time cause it's not reliable
         self.accuracy = 50
 
-    def update_altitude(self, altitude: int, cached: bool) -> None:
+    def update_satellites(self, satellites: list[gps.gpsdata.satellite], valid: int) -> None:
+        self.set_attr("satellites", satellites, valid, gps.SATELLITE_SET)
+
+    def update_altitude(self, altitude: int) -> None:
         self.altitude = altitude
-        self.cached_altitude = cached
 
     # ---------- VALIDATION/TIME ----------
     def is_valid(self) -> bool:
@@ -328,16 +328,13 @@ class GPSD(threading.Thread):
     # ---------- UPDATE AND CLEAN ----------
     def update(self) -> None:
         with self.lock:
-            if not (device := self.session.device):
+            if not ((gps.ONLINE_SET & self.session.valid) and (device := self.session.device)):
                 return
             if not device in self.positions:
                 self.positions[device] = Position(device=device)
-            self.positions[device].update(
-                self.session.fix, self.session.satellites, self.session.valid
-            )
-
+            self.positions[device].update_fix(self.session.fix, self.session.valid)
             if gps.ALTITUDE_SET & self.session.valid:  # cache altitude
-                self.positions[device].update_altitude(self.session.fix.altMSL, False)
+                self.positions[device].update_altitude(self.session.fix.altMSL)
                 self.cache_elevation(
                     self.session.fix.latitude,
                     self.session.fix.longitude,
@@ -345,7 +342,12 @@ class GPSD(threading.Thread):
                 )
             else:  # retreive altitude
                 altitude = self.get_elevation(self.session.fix.latitude, self.session.fix.longitude)
-                self.positions[device].update_altitude(altitude, True)
+                self.positions[device].update_altitude(altitude)
+            self.positions[device].update_satellites(self.session.satellites, self.session.valid)
+            # Soft reset session after reading
+            self.session.device = None
+            self.session.fix = gps.gpsfix()
+            self.session.satellites = []
 
     def clean(self) -> None:
         if not self.update_timeout:
