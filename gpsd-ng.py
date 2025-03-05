@@ -58,25 +58,28 @@ from pwnagotchi.ui.view import BLACK
 from pwnagotchi.utils import StatusFile
 
 
-@dataclass
+@dataclass(slots=True)
 class Position:
+    """
+    Keeps data from GPS device
+    """
+
     DATE_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
     FIXES = {0: "No data", 1: "No fix", 2: "2D fix", 3: "3D fix"}
 
-    latitude: float = 0
-    longitude: float = 0
-    altitude: float = 0
-    speed: float = 0
-    last_update: datetime = None
-    last_fix: datetime = None
-    updated: datetime = None
+    latitude: float = field(default=float("NaN"))
+    longitude: float = field(default=float("NaN"))
+    altitude: float = field(default=float("NaN"))
+    speed: float = field(default=float("NaN"))
+    last_update: datetime | None = None
+    last_fix: datetime | None = None
     mode: int = 0
     satellites: list = field(default_factory=list)
-    device: str = ""
-    accuracy: float = 0
+    device: str = field(default="missing", init=True)
+    accuracy: float = field(default=float("NaN"))
 
     @property
-    def viewed_satellites(self) -> int:
+    def seen_satellites(self) -> int:
         return len(self.satellites)
 
     @property
@@ -88,24 +91,30 @@ class Position:
         return self.FIXES.get(self.mode, "Mode error")
 
     @property
-    def last_update_ago(self) -> int:
-        return round((datetime.now(tz=UTC) - self.last_update).total_seconds())
+    def last_update_ago(self) -> int | None:
+        if self.last_update:
+            return round((datetime.now(tz=UTC) - self.last_update).total_seconds())
+        return None
 
     @property
-    def last_fix_ago(self) -> int:
-        return round((datetime.now(tz=UTC) - self.last_fix).total_seconds())
+    def last_fix_ago(self) -> int | None:
+        if self.last_fix:
+            return round((datetime.now(tz=UTC) - self.last_fix).total_seconds())
+        return None
 
     def __lt__(self, other: Self) -> bool:
-        try:
+        if self.last_fix and other.last_fix:
             return (self.mode, -self.last_fix.timestamp()) < (
                 other.mode,
                 -other.last_fix.timestamp(),
             )
-        except AttributeError:
-            return False
+        return False
 
     # ---------- UPDATES ----------
     def set_attr(self, attr: str, value: Any, valid: int, flag: int) -> None:
+        """
+        Set an attribute only if valid contains the related flag
+        """
         if flag & valid:
             setattr(self, attr, value)
             self.last_update = datetime.now(tz=UTC)  # Don't use fix.time cause it's not reliable
@@ -125,48 +134,54 @@ class Position:
     def update_altitude(self, altitude: int) -> None:
         self.altitude = altitude
 
-    # ---------- VALIDATION/TIME ----------
+    # ---------- VALIDATION AND TIME ----------
     def is_valid(self) -> bool:
         return gps.isfinite(self.latitude) and gps.isfinite(self.longitude) and self.mode >= 2
 
-    def is_old(self, date: datetime | None, max_seconds: int) -> bool:
+    def is_old(self, date: datetime | None, max_seconds: int) -> bool | None:
         if not date:
             return None
         return (datetime.now(tz=UTC) - date).total_seconds() > max_seconds
 
-    def is_update_old(self, max_seconds: int) -> bool:
+    def is_update_old(self, max_seconds: int) -> bool | None:
         return self.is_old(self.last_update, max_seconds)
 
-    def is_fix_old(self, max_seconds: int) -> bool:
+    def is_fix_old(self, max_seconds: int) -> bool | None:
         return self.is_old(self.last_fix, max_seconds)
 
     def is_fixed(self) -> bool:
         return self.mode >= 2
 
     # ---------- JSON DUMP ----------
-    def to_json(self) -> dict:
-        return {
-            "Latitude": self.latitude,
-            "Longitude": self.longitude,
-            "Altitude": self.altitude,
-            "Speed": self.speed * gps.KNOTS_TO_MPS,
-            "Date": self.last_fix.strftime(self.DATE_FORMAT),
-            "Updated": self.last_fix.strftime(self.DATE_FORMAT),  # Wigle plugin
-            "Mode": self.mode,
-            "Fix": self.fix,
-            "Sats": self.viewed_satellites,
-            "Sats_Valid": self.used_satellites,
-            "Device": self.device,
-            "Accuracy": self.accuracy,
-        }
+    def to_json(self) -> dict[str, int | float | datetime | str | None]:
+        if self.last_fix:
+            last_fix = self.last_fix.strftime(self.DATE_FORMAT)
+        else:
+            last_fix = None
+        return dict(
+            Latitude=self.latitude,
+            Longitude=self.longitude,
+            Altitude=self.altitude,
+            Speed=self.speed * gps.KNOTS_TO_MPS,
+            Date=last_fix,
+            Updated=last_fix,  # Wigle plugin
+            Mode=self.mode,
+            Fix=self.fix,
+            Sats=self.seen_satellites,
+            Sats_Valid=self.used_satellites,
+            Device=self.device,
+            Accuracy=self.accuracy,
+        )
 
     # ---------- FORMAT ----------
     def format_info(self) -> str:
-        dev = re.search(r"(^tcp|^udp|tty.*)", self.device, re.IGNORECASE)
-        dev = f"{dev[0]}:" if dev else ""
-        return f"{dev}{self.fix} ({self.used_satellites}/{self.viewed_satellites} Sats)"
+        device = re.search(r"(^tcp|^udp|tty.*)", self.device, re.IGNORECASE)
+        dev = f"{device[0]}:" if device else ""
+        return f"{dev}{self.fix} ({self.used_satellites}/{self.seen_satellites} Sats)"
 
-    def format_lat_long(self, display_precision: int = 9) -> str:
+    def format_lat_long(self, display_precision: int = 9) -> tuple[str, str]:
+        if not (gps.isfinite(self.latitude) and gps.isfinite(self.longitude)):
+            return ("-", "-")
         if self.latitude < 0:
             lat = f"{-self.latitude:4.{display_precision}f}S"
         else:
@@ -178,22 +193,22 @@ class Position:
         return lat, long
 
     def format_altitude(self, units: str) -> str:
-        match self.altitude, units:
-            case (None, _) | (float("NaN"), _):
-                return "-"
-            case _, "imperial":
+        if not gps.isfinite(self.altitude):
+            return "_"
+        match units:
+            case "imperial":
                 return f"{round(geopy.units.feet(meters=self.altitude))}ft"
-            case _, "metric":
+            case "metric":
                 return f"{round(self.altitude)}m"
         return "error"
 
     def format_speed(self, units: str) -> str:
-        match self.speed, units:
-            case (None, _) | (float("NaN"), _):
-                return "-"
-            case _, "imperial":
+        if not gps.isfinite(self.speed):
+            return "_"
+        match units:
+            case "imperial":
                 return f"{round(self.speed * 1.68781)}ft/s"
-            case _, "metric":
+            case "metric":
                 return f"{round(self.speed * gps.KNOTS_TO_MPS)}m/s"
         return "error"
 
@@ -204,8 +219,9 @@ class Position:
         spd = self.format_speed(units)
         return info, lat, long, alt, spd
 
-    def generate_polar_plot(self) -> None:
+    def generate_polar_plot(self) -> str | None:
         """
+        Return a polar image (base64) of seen satellites.
         Thanks to https://github.com/rai68/gpsd-easy/blob/main/gpsdeasy.py
         """
         try:
@@ -253,27 +269,33 @@ class Position:
             return ""
 
 
+@dataclass(slots=True)
 class GPSD(threading.Thread):
-    def __init__(self):
-        super().__init__()
-        self.gpsdhost = None
-        self.gpsdport = None
-        self.fix_timeout = 120
-        self.update_timeout = 120
-        self.session = None
-        self.positions = dict()  # Device:Position dictionnary
-        self.main_device = None
-        self.last_position = None
-        self.elevation_data = dict()
-        self.last_clean = datetime.now(tz=UTC)
-        self.elevation_report = None
-        self.last_elevation = datetime(2025, 1, 1, 0, 0, tzinfo=UTC)
-        self.lock = threading.Lock()
-        self.running = True
+    gpsdhost: str | None = None
+    gpsdport: int | None = None
+    fix_timeout: int = 120
+    update_timeout: int = 120
+    session: gps.gps = None
+    positions: dict = field(default_factory=dict)  # Device:Position dictionnary
+    main_device: str | None = None
+    last_position: Position | None = None
+    elevation_data: dict = field(default_factory=dict)
+    last_clean: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
+    elevation_report: StatusFile | None = None
+    last_elevation: datetime = field(default_factory=lambda: datetime(2025, 1, 1, 0, 0, tzinfo=UTC))
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    running: bool = True
+
+    def __post_init__(self) -> None:
+        super(GPSD, self).__init__()
+
+    def __hash__(self):
+        return super(GPSD, self).__hash__()
 
     # ---------- CONFIGURE AND CONNECTION ----------
     def configure(
         self,
+        *,
         gpsdhost: str,
         gpsdport: int,
         fix_timeout: int,
@@ -293,7 +315,7 @@ class GPSD(threading.Thread):
         logging.info(f"[GPSD-ng] {len(self.elevation_data)} locations already in cache")
 
     def is_configured(self) -> bool:
-        return self.gpsdhost and self.gpsdport
+        return self.gpsdhost != None and self.gpsdport != None
 
     def restart_gpsd(self):
         try:
@@ -302,6 +324,7 @@ class GPSD(threading.Thread):
                 check=True,
                 timeout=20,
             )
+            time.sleep(2)
             logging.info(f"[GPSD-ng] GPSD restarted")
         except Exception as exp:
             logging.error(f"[GPSD-ng] Error while restarting gpsd: {exp}")
@@ -345,6 +368,7 @@ class GPSD(threading.Thread):
                 self.positions[device].update_altitude(altitude)
             self.positions[device].update_satellites(self.session.satellites, self.session.valid)
             # Soft reset session after reading
+            self.session.valid = 0
             self.session.device = None
             self.session.fix = gps.gpsfix()
             self.session.satellites = []
@@ -395,17 +419,16 @@ class GPSD(threading.Thread):
             self.loop()
         except Exception as exp:
             logging.critical(f"[GPSD-ng] Critical error during loop: {exp}")
-            logging.critical(f"[GPSD-ng] Error: {exp.message}")
 
     def join(self, timeout=None) -> None:
         self.running = False
         try:
-            super().join(timeout)
+            super(GPSD, self).join(timeout)
         except Exception as e:
             logging.error(f"[GPSD-ng] Error on join(): {e}")
 
     # ---------- POSITION ----------
-    def get_position_device(self) -> str:
+    def get_position_device(self) -> str | None:
         if not self.is_configured():
             return None
         with self.lock:
@@ -419,7 +442,7 @@ class GPSD(threading.Thread):
             # Fallback
             try:
                 # Filter devices without coords and sort by best positionning/most recent
-                dev_pos = filter(lambda x: x[1].is_valid(), self.positions.items())
+                dev_pos = list(filter(lambda x: x[1].is_valid(), self.positions.items()))
                 dev_pos = sorted(dev_pos, key=lambda x: x[1], reverse=True)
                 return dev_pos[0][0]  # Get first and best element
             except IndexError:
@@ -433,11 +456,12 @@ class GPSD(threading.Thread):
                 return self.positions[device]
         except KeyError:
             pass
-        try:
-            if self.fix_timeout and self.last_position.is_fix_old(self.fix_timeout):
-                self.last_position = None
-        except AttributeError:
-            pass
+        if (
+            self.fix_timeout
+            and self.last_position
+            and self.last_position.is_fix_old(self.fix_timeout)
+        ):
+            self.last_position = None
         return self.last_position
 
     # ---------- OPEN ELEVATION CACHE ----------
@@ -454,19 +478,19 @@ class GPSD(threading.Thread):
             self.elevation_data[key] = elevation
             self.save_elevation_cache()
 
-    def get_elevation(self, latitude: float, longitude: float) -> float | None:
+    def get_elevation(self, latitude: float, longitude: float) -> float:
         key = self.elevation_key(latitude, longitude)
         try:
             return self.elevation_data[key]
         except KeyError:
-            return None
+            return float("NaN")
 
     def save_elevation_cache(self) -> None:
         if self.elevation_report:
             logging.info("[GPSD-ng] Saving elevation cache")
             self.elevation_report.update(data={"elevations": self.elevation_data})
 
-    def calculate_locations(self, max_dist: int = 100) -> list[tuple[float, float]]:
+    def calculate_locations(self, max_dist: int = 100) -> list[dict[str, float]]:
         locations = list()
 
         def append_location(latitude: float, longitude: float) -> None:
@@ -485,7 +509,10 @@ class GPSD(threading.Thread):
                 point = geopy.distance.distance(meters=dist).destination(center, bearing=degree)
                 append_location(point.latitude, point.longitude)
         seen = []
-        return [l for l in locations if l not in seen and not seen.append(l)]  # remove duplicates
+        for l in locations:
+            if not l in seen:
+                seen.append(l)
+        return seen
 
     def update_cache_elevation(self) -> None:
         if not (
@@ -494,13 +521,10 @@ class GPSD(threading.Thread):
         ):
             return
         self.last_elevation = datetime.now(tz=UTC)
-        logging.info(
-            f"[GPSD-ng] Running elevation cache: {len(self.elevation_data)} elevations available"
-        )
-
         if not (locations := self.calculate_locations()):
             return
-        logging.info(f"[GPSD-ng] Trying to cache {len(locations)} locations: {locations}")
+        logging.info(f"[GPSD-ng] Elevation cache: {len(self.elevation_data)} elevations available")
+        logging.info(f"[GPSD-ng] Trying to cache {len(locations)} locations")
         try:
             logging.info("[GPSD-ng] let's request")
             res = requests.post(
@@ -523,44 +547,56 @@ class GPSD(threading.Thread):
             logging.error(f"[GPSD-ng] Error with open-elevation: {e}")
 
 
+@dataclass(slots=True)
 class GPSD_ng(plugins.Plugin):
-    __name__ = "GPSD-ng"
-    __GitHub__ = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
-    __author__ = "@fmatray"
-    __version__ = "1.7.0"
-    __license__ = "GPL3"
-    __description__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
-    __help__ = "Use GPSD server to save coordinates on handshake. Can use mutiple gps device (gps modules, USB dongle, phone, etc.)"
-    __dependencies__ = {
-        "apt": ["gpsd python3-gps"],
-    }
-    __defaults__ = {
-        "enabled": False,
-    }
+    gpsd: GPSD = field(default_factory=lambda: GPSD())
+    display_fields: list[str] = field(default_factory=list)
+    handshake_dir: str = ""
+    use_open_elevation: bool = True
+    position: str = "127,64"
+    linespacing: int = 10
+    ui_counter: int = 0
+    last_ui_update: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
+    view_mode: str = "compact"
+    display_precision: int = 6
+    units: str = "metric"
+    show_faces: bool = True
+    lost_face_1: str = "(O_o )"
+    lost_face_2: str = "( o_O)"
+    face_1: str = "(•_• )"
+    face_2: str = "( •_•)"
+    template: str = "Loading error"
+    ready: bool = False
 
-    FIELDS = ["info", "altitude", "speed"]
+    __name__: str = "GPSD-ng"
+    __GitHub__: str = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
+    __author__: str = "@fmatray"
+    __version__: str = "1.7.0"
+    __license__: str = "GPL3"
+    __description__: str = (
+        "Use GPSD server to save position on handshake. Can use mutiple gps device (serial, USB dongle, phone, etc.)"
+    )
 
-    def __init__(self) -> None:
-        self.gpsd = GPSD()
-        self.options = dict()
-        self.ui_counter = 0
-        self.last_ui_update = datetime.now(tz=UTC)
+    __help__: str = (
+        "Use GPSD server to save position on handshake. Can use mutiple gps device (serial, USB dongle, phone, etc.)"
+    )
+    __dependencies__: dict[str, Any] = field(default_factory=lambda: dict(apt=["gpsd python3-gps"]))
+    __defaults__: dict[str, Any] = field(default_factory=lambda: dict(enabled=False))
+
+    def __post_init__(self) -> None:
+        super(plugins.Plugin, self).__init__()
         template_file = os.path.dirname(os.path.realpath(__file__)) + "/" + "gpsd-ng.html"
-        self.template = "Loading error"
         try:
             with open(template_file, "r") as fb:
                 self.template = fb.read()
         except Exception as e:
             logging.error(f"[GPSD-ng] Cannot read template file {template_file}: {e}")
 
-    @property
-    def is_ready(self) -> bool:
-        return self.gpsd and self.gpsd.is_configured()
-
     # ----------LOAD AND CONFIGURE ----------
     def on_loaded(self) -> None:
         try:
-            self.gpsd.start()
+            if self.gpsd:
+                self.gpsd.start()
             logging.info("[GPSD-ng] plugin loaded")
         except Exception as e:
             logging.error(f"[GPSD-ng] Error on loading. Trying later...")
@@ -568,25 +604,28 @@ class GPSD_ng(plugins.Plugin):
     def on_config_changed(self, config: dict) -> None:
         logging.info("[GPSD-ng] Reading config")
 
-        self.view_mode = self.options.get("view_mode", "compact").lower()
+        self.view_mode = self.options.get("view_mode", self.view_mode).lower()
         if not self.view_mode in ["compact", "full", "none"]:
             logging.error(f"[GPSD-ng] Wrong setting for view_mode: {self.view_mode}. Using compact")
             self.view_mode = "compact"
-        self.fields = self.options.get("fields", self.FIELDS)
-        if isinstance(self.fields, str):
-            self.fields = self.fields.split(",")
-        if not isinstance(self.fields, list):
-            logging.error(f"[GPSD-ng] Wrong setting for fields: must be a list. Using default")
-            self.fields = self.FIELDS
-        else:
-            self.fields = [i.strip() for i in self.fields]
-            for field in self.fields:
-                if not field in self.fields:
+
+        DISPLAY_FIELDS = ["info", "altitude", "speed"]
+        display_fields = self.options.get("fields", DISPLAY_FIELDS)
+        if isinstance(display_fields, str):
+            self.display_fields = display_fields.split(",")
+        if isinstance(display_fields, list):
+            self.display_fields = [i.strip() for i in self.display_fields]
+            for field in self.display_fields:
+                if not field in self.display_fields:
                     logging.error(f"[GPSD-ng] Wrong setting for fields: {field}.")
-        if "longitude" not in self.fields:
-            self.fields.insert(0, "longitude")
-        if "latitude" not in self.fields:
-            self.fields.insert(0, "latitude")
+        else:
+            logging.error(f"[GPSD-ng] Wrong setting for fields: must be a list. Using default")
+            self.display_fields = DISPLAY_FIELDS
+
+        if "longitude" not in self.display_fields:
+            self.display_fields.insert(0, "longitude")
+        if "latitude" not in self.display_fields:
+            self.display_fields.insert(0, "latitude")
 
         self.handshake_dir = config["bettercap"].get("handshakes")
         gpsdhost = self.options.get("gpsdhost", "127.0.0.1")
@@ -599,31 +638,32 @@ class GPSD_ng(plugins.Plugin):
             logging.error(f"[GPSD-ng] Setting 'update_timeout' to 'fix_timeout'.")
             update_timeout = fix_timeout
 
-        self.use_open_elevation = self.options.get("use_open_elevation", True)
+        self.use_open_elevation = self.options.get("use_open_elevation", self.use_open_elevation)
         save_elevations = self.options.get("save_elevations", True)
-        self.gpsd.configure(
-            gpsdhost,
-            gpsdport,
-            fix_timeout,
-            update_timeout,
-            main_device,
-            os.path.join(self.handshake_dir, ".elevations"),
-            save_elevations,
-        )
+        if self.gpsd:
+            self.gpsd.configure(
+                gpsdhost=gpsdhost,
+                gpsdport=gpsdport,
+                fix_timeout=fix_timeout,
+                update_timeout=update_timeout,
+                main_device=main_device,
+                cache_file=os.path.join(self.handshake_dir, ".elevations"),
+                save_elevations=save_elevations,
+            )
 
-        self.units = self.options.get("units", "metric").lower()
+        self.units = self.options.get("units", self.units).lower()
         if not self.units in ["metric", "imperial"]:
             logging.error(f"[GPSD-ng] Wrong setting for units: {self.units}. Using metric")
             self.units = "metric"
-        self.display_precision = int(self.options.get("display_precision", 6))
+        self.display_precision = int(self.options.get("display_precision", self.display_precision))
 
-        self.position = self.options.get("position", "127,64")
-        self.linespacing = int(self.options.get("linespacing", 10))
-        self.show_faces = self.options.get("show_faces", True)
-        self.lost_face_1 = self.options.get("lost_face_1", "(O_o )")
-        self.lost_face_2 = self.options.get("lost_face_1", "( o_O)")
-        self.face_1 = self.options.get("face_1", "(•_• )")
-        self.face_2 = self.options.get("face_2", "( •_•)")
+        self.position = self.options.get("position", self.position)
+        self.linespacing = self.options.get("linespacing", self.linespacing)
+        self.show_faces = self.options.get("show_faces", self.show_faces)
+        self.lost_face_1 = self.options.get("lost_face_1", self.lost_face_1)
+        self.lost_face_2 = self.options.get("lost_face_1", self.lost_face_2)
+        self.face_1 = self.options.get("face_1", self.face_1)
+        self.face_2 = self.options.get("face_2", self.face_2)
 
     def on_ready(self, agent) -> None:
         try:
@@ -631,9 +671,12 @@ class GPSD_ng(plugins.Plugin):
             agent.run("gps off")
         except Exception as e:
             logging.info(f"[GPSD-ng] Bettercap gps was already off.")
+        self.ready = True
 
     # ---------- UNLOAD ----------
     def on_unload(self, ui) -> None:
+        if not (self.gpsd and self.ready):
+            return
         try:
             self.gpsd.join()
         except Exception:
@@ -659,9 +702,9 @@ class GPSD_ng(plugins.Plugin):
             logging.error(f"[GPSD-ng] Cannot set bettercap GPS: {e}")
 
     def on_internet_available(self, agent) -> None:
-        if not self.is_ready:
+        if not (self.gpsd and self.ready):
             return
-        if self.use_open_elevation:
+        if self.gpsd and self.use_open_elevation:
             self.gpsd.update_cache_elevation()
 
         if not (coords := self.gpsd.get_position()):
@@ -678,7 +721,7 @@ class GPSD_ng(plugins.Plugin):
             logging.error(f"[GPSD-ng] Error on saving gps coordinates: {e}")
 
     def on_unfiltered_ap_list(self, agent, aps) -> None:
-        if not self.is_ready:
+        if not (self.gpsd and self.ready):
             return
         if not (coords := self.gpsd.get_position()):
             return
@@ -707,7 +750,7 @@ class GPSD_ng(plugins.Plugin):
             self.save_gps_file(gps_filename, coords)
 
     def on_handshake(self, agent, filename: str, access_point, client_station) -> None:
-        if not self.is_ready:
+        if not (self.gpsd and self.ready):
             return
         if not (coords := self.gpsd.get_position()):
             logging.info("[GPSD-ng] not saving GPS: no fix")
@@ -720,8 +763,7 @@ class GPSD_ng(plugins.Plugin):
         if self.view_mode == "none":
             return
         try:
-            pos = self.position.split(",")
-            pos = [int(x.strip()) for x in pos]
+            pos = [int(x.strip()) for x in self.position.split(",")]
             lat_pos = (pos[0] + 5, pos[1])
             lon_pos = (pos[0], pos[1] + self.linespacing)
             alt_pos = (pos[0] + 5, pos[1] + (2 * self.linespacing))
@@ -781,7 +823,7 @@ class GPSD_ng(plugins.Plugin):
                     ("altitude", "alt:", alt_pos),
                     ("speed", "spd:", spd_pos),
                 ]:
-                    if key in self.fields:
+                    if key in self.display_fields:
                         ui.add_element(
                             key,
                             LabeledValue(
@@ -797,7 +839,10 @@ class GPSD_ng(plugins.Plugin):
             case _:
                 pass
 
-    def get_statistics(self) -> tuple[int, int]:
+    def get_statistics(self) -> dict[str, int | float] | None:
+        if not (self.gpsd and self.ready):
+            return {}
+
         pcap_files = glob(os.path.join(self.handshake_dir, "*.pcap"))
         nb_pcap_files = len(pcap_files)
         nb_position_files = 0
@@ -827,10 +872,14 @@ class GPSD_ng(plugins.Plugin):
             case _:
                 pass
 
-    def lost_mode(self, ui, coords: Position) -> None:
+    def lost_mode(self, ui, coords: Position | None) -> None:
+        if not (self.gpsd and self.ready):
+            return
+
         self.display_face(ui, self.lost_face_1, self.lost_face_2)
 
-        statistics = self.get_statistics()
+        if not (statistics := self.get_statistics()):
+            return
         if not self.gpsd.is_configured():
             status = "GPSD not configured"
         elif not self.gpsd.is_connected():
@@ -859,19 +908,19 @@ class GPSD_ng(plugins.Plugin):
     def compact_view_mode(self, ui, coords: Position) -> None:
         info, lat, long, alt, spd = coords.format(self.units, self.display_precision)
         match self.ui_counter:
-            case 0 if "info" in self.fields:
+            case 0 if "info" in self.display_fields:
                 ui.set("gps", info)
             case 1:
                 msg = []
-                if "speed" in self.fields:
+                if "speed" in self.display_fields:
                     msg.append(f"Spd:{spd}")
-                if "altitude" in self.fields:
+                if "altitude" in self.display_fields:
                     msg.append(f"Alt:{alt}")
                 if msg:
                     ui.set("gps", " ".join(msg))
             case 2:
-                statistics = self.get_statistics()
-                ui.set("gps", f"Complet.:{statistics['completeness']}%")
+                if statistics := self.get_statistics():
+                    ui.set("gps", f"Complet.:{statistics['completeness']}%")
             case _:
                 ui.set("gps", f"{lat},{long}")
 
@@ -879,13 +928,15 @@ class GPSD_ng(plugins.Plugin):
         _, lat, long, alt, spd = coords.format(self.units, self.display_precision)
         ui.set("latitude", f"{lat} ")
         ui.set("longitude", f"{long} ")
-        if "altitude" in self.fields:
+        if "altitude" in self.display_fields:
             ui.set("altitude", f"{alt} ")
-        if "speed" in self.fields:
+        if "speed" in self.display_fields:
             ui.set("speed", f"{spd} ")
 
     def on_ui_update(self, ui) -> None:
-        if not self.is_ready or self.view_mode == "none":
+        if not (self.gpsd and self.ready):
+            return
+        if self.view_mode == "none":
             return
         if (datetime.now(tz=UTC) - self.last_ui_update).total_seconds() < 10:
             return
@@ -909,7 +960,7 @@ class GPSD_ng(plugins.Plugin):
         def error(message):
             return render_template("status.html", title="Error", go_back_after=10, message=message)
 
-        if not self.is_ready:
+        if not (self.gpsd and self.ready):
             return error("Plugin not ready")
         match path:
             case None | "/":
