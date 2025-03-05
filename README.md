@@ -8,13 +8,23 @@ __Advantages with gpsd server__:
 - Early position polling
 - No position lost on bettercap/pwnagotchi restarts
 - High compatibility (device, protocol, vendor, version): NMEA/ublox modules (Serial), USB modules, Android/IPhone
-- Non blocking access to GPS information, no deadlock, 
+- Non blocking access to GPS information
 - GPS hotplugin
 - Compatibility with other applications like chrony
 - Compatible with NTRIP/RTK/RTCM
 
 __Exemple__:\
 GPS module/dongle and/or Phone (IOS/Android) ------> GPSD ------> GPSD-ng ------> Pwnagotchi
+
+# Features
+- Client to GPSD server with multi device management
+- Several customable UI modes and a Web UI
+- Save position on handshake and fallback for pcap without position
+- Unit option: metric or imperial
+- Use open elevation and cache for 2D fix.
+- Show completeness statistic (percentage of pcap files with a valid position file)
+- Two hooks: ```on_position_available(coords)``` and ```on_position_lost()```
+- Non blocking plugin
 
 # Install GPSD server
 - Install binaries:
