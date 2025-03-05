@@ -18,7 +18,7 @@
 # main.plugins.gpsd-ng.main_device = "/dev/ttyS0" # default None
 # main.plugins.gpsd-ng.use_open_elevation = true
 # main.plugins.gpsd-ng.save_elevations = true
-# main.plugins.gpsd-ng.view_mode = "compact" # "compact", "full", "none"
+# main.plugins.gpsd-ng.view_mode = "compact" # "compact", "full", "status", "none"
 # main.plugins.gpsd-ng.fields = "info,speed,altitude" # list or string of fields to display
 # main.plugins.gpsd-ng.units = "metric" # "metric", "imperial"
 # main.plugins.gpsd-ng.display_precision = 6 # display precision for latitude and longitude
@@ -408,9 +408,7 @@ class GPSD(threading.Thread):
         logging.info(f"[GPSD-ng] Starting loop")
         while self.running:
             self.clean()
-            if not self.is_configured():
-                time.sleep(1)
-            elif not self.session:
+            if not self.session:
                 self.connect()
             elif self.session.waiting(timeout=2) and self.session.read() == 0:
                 self.update()
@@ -422,8 +420,10 @@ class GPSD(threading.Thread):
                 self.session = None
             self.plugin_hook()
 
-
     def run(self) -> None:
+        if not self.is_configured():
+            logging.critical(f"[GPSD-ng] GPSD thread not configured.")
+            return
         self.restart_gpsd()
         try:
             self.loop()
@@ -581,7 +581,7 @@ class GPSD_ng(plugins.Plugin):
     __name__: str = "GPSD-ng"
     __GitHub__: str = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
     __author__: str = "@fmatray"
-    __version__: str = "1.7.0"
+    __version__: str = "1.7.1"
     __license__: str = "GPL3"
     __description__: str = (
         "Use GPSD server to save position on handshake. Can use mutiple gps device (serial, USB dongle, phone, etc.)"
@@ -604,18 +604,13 @@ class GPSD_ng(plugins.Plugin):
 
     # ----------LOAD AND CONFIGURE ----------
     def on_loaded(self) -> None:
-        try:
-            if self.gpsd:
-                self.gpsd.start()
-            logging.info("[GPSD-ng] plugin loaded")
-        except Exception as e:
-            logging.error(f"[GPSD-ng] Error on loading. Trying later...")
+        logging.info("[GPSD-ng] plugin loaded")
 
     def on_config_changed(self, config: dict) -> None:
         logging.info("[GPSD-ng] Reading config")
 
         self.view_mode = self.options.get("view_mode", self.view_mode).lower()
-        if not self.view_mode in ["compact", "full", "none"]:
+        if not self.view_mode in ["compact", "full", "status", "none"]:
             logging.error(f"[GPSD-ng] Wrong setting for view_mode: {self.view_mode}. Using compact")
             self.view_mode = "compact"
 
@@ -650,16 +645,15 @@ class GPSD_ng(plugins.Plugin):
 
         self.use_open_elevation = self.options.get("use_open_elevation", self.use_open_elevation)
         save_elevations = self.options.get("save_elevations", True)
-        if self.gpsd:
-            self.gpsd.configure(
-                gpsdhost=gpsdhost,
-                gpsdport=gpsdport,
-                fix_timeout=fix_timeout,
-                update_timeout=update_timeout,
-                main_device=main_device,
-                cache_file=os.path.join(self.handshake_dir, ".elevations"),
-                save_elevations=save_elevations,
-            )
+        self.gpsd.configure(
+            gpsdhost=gpsdhost,
+            gpsdport=gpsdport,
+            fix_timeout=fix_timeout,
+            update_timeout=update_timeout,
+            main_device=main_device,
+            cache_file=os.path.join(self.handshake_dir, ".elevations"),
+            save_elevations=save_elevations,
+        )
 
         self.units = self.options.get("units", self.units).lower()
         if not self.units in ["metric", "imperial"]:
@@ -677,6 +671,12 @@ class GPSD_ng(plugins.Plugin):
 
     def on_ready(self, agent) -> None:
         try:
+            self.gpsd.start()
+        except Exception as e:
+            logging.critical(f"[GPSD-ng] Error with GPSD Thread: {e}")
+            logging.critical(f"[GPSD-ng] Stop plugin")
+            return
+        try:
             logging.info(f"[GPSD-ng] Disabling bettercap's gps module")
             agent.run("gps off")
         except Exception as e:
@@ -685,7 +685,7 @@ class GPSD_ng(plugins.Plugin):
 
     # ---------- UNLOAD ----------
     def on_unload(self, ui) -> None:
-        if not (self.gpsd and self.ready):
+        if not self.ready:
             return
         try:
             self.gpsd.join()
@@ -698,6 +698,7 @@ class GPSD_ng(plugins.Plugin):
                 "altitude",
                 "speed",
                 "gps",
+                "gps_status"
             ]:
                 try:
                     ui.remove_element(element)
@@ -712,9 +713,9 @@ class GPSD_ng(plugins.Plugin):
             logging.error(f"[GPSD-ng] Cannot set bettercap GPS: {e}")
 
     def on_internet_available(self, agent) -> None:
-        if not (self.gpsd and self.ready):
+        if not self.ready:
             return
-        if self.gpsd and self.use_open_elevation:
+        if self.use_open_elevation:
             self.gpsd.update_cache_elevation()
 
         if not (coords := self.gpsd.get_position()):
@@ -731,7 +732,7 @@ class GPSD_ng(plugins.Plugin):
             logging.error(f"[GPSD-ng] Error on saving gps coordinates: {e}")
 
     def on_unfiltered_ap_list(self, agent, aps) -> None:
-        if not (self.gpsd and self.ready):
+        if not self.ready:
             return
         if not (coords := self.gpsd.get_position()):
             return
@@ -760,7 +761,7 @@ class GPSD_ng(plugins.Plugin):
             self.save_gps_file(gps_filename, coords)
 
     def on_handshake(self, agent, filename: str, access_point, client_station) -> None:
-        if not (self.gpsd and self.ready):
+        if not self.ready:
             return
         if not (coords := self.gpsd.get_position()):
             logging.info("[GPSD-ng] not saving GPS: no fix")
@@ -846,12 +847,22 @@ class GPSD_ng(plugins.Plugin):
                                 label_spacing=0,
                             ),
                         )
+            case "status":
+                ui.add_element(
+                    "gps_status",
+                    Text(
+                        value="----",
+                        color=BLACK,
+                        position=lat_pos,
+                        font=fonts.Small,
+                    ),
+                )
             case _:
                 pass
 
     def get_statistics(self) -> dict[str, int | float] | None:
-        if not (self.gpsd and self.ready):
-            return {}
+        if not self.ready:
+            return None
 
         pcap_files = glob(os.path.join(self.handshake_dir, "*.pcap"))
         nb_pcap_files = len(pcap_files)
@@ -883,7 +894,7 @@ class GPSD_ng(plugins.Plugin):
                 pass
 
     def lost_mode(self, ui, coords: Position | None) -> None:
-        if not (self.gpsd and self.ready):
+        if not self.ready:
             return
 
         self.display_face(ui, self.lost_face_1, self.lost_face_2)
@@ -897,7 +908,7 @@ class GPSD_ng(plugins.Plugin):
         elif statistics["nb_devices"] == 0:
             status = "No GPS device found"
         else:
-            status = "Can't get a location"
+            status = "Can't get a position"
         ui.set("status", status)
 
         match self.view_mode:
@@ -912,6 +923,8 @@ class GPSD_ng(plugins.Plugin):
                         ui.set(i, "-")
                     except KeyError:
                         pass
+            case "status":
+                ui.set("gps_status", "Lost")
             case _:
                 pass
 
@@ -943,10 +956,14 @@ class GPSD_ng(plugins.Plugin):
         if "speed" in self.display_fields:
             ui.set("speed", f"{spd} ")
 
-    def on_ui_update(self, ui) -> None:
-        if not (self.gpsd and self.ready):
+    def status_view_mode(self, ui, coords: Position) -> None:
+        if coords:
+            ui.set("gps_status", f" {coords.mode}D ")
             return
-        if self.view_mode == "none":
+        ui.set("gps_status", "Err.")
+
+    def on_ui_update(self, ui) -> None:
+        if not self.ready or self.view_mode == "none":
             return
         if (datetime.now(tz=UTC) - self.last_ui_update).total_seconds() < 10:
             return
@@ -963,6 +980,8 @@ class GPSD_ng(plugins.Plugin):
                     self.compact_view_mode(ui, coords)
                 case "full":
                     self.full_view_mode(ui, coords)
+                case "status":
+                    self.status_view_mode(ui, coords)
                 case _:
                     pass
 
@@ -970,7 +989,7 @@ class GPSD_ng(plugins.Plugin):
         def error(message):
             return render_template("status.html", title="Error", go_back_after=10, message=message)
 
-        if not (self.gpsd and self.ready):
+        if not self.ready:
             return error("Plugin not ready")
         match path:
             case None | "/":
