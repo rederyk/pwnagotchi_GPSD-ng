@@ -167,6 +167,11 @@ Note: During on_unfiltered_ap_list(), if an access point whith pcap files but wi
 ## Bettercap
 Gps option is set to off. Position is update by the plugin to Bettercap, on handshake, internet_available and on_unfiltered_ap_list.
 
+## Developpers
+This plugin adds two plugin hooks:  
+-on_position_available(Position) and on_position_lost()
+- 
+
 ## Troubleshooting: Have you tried to turn it off and on again?
 ### "[GPSD-ng] Error while importing matplotlib for generate_polar_plot()"
 matplotlib is not up to date in /home/pi/.pwn:

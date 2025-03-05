@@ -153,7 +153,7 @@ class Position:
         return self.mode >= 2
 
     # ---------- JSON DUMP ----------
-    def to_json(self) -> dict[str, int | float | datetime | str | None]:
+    def to_dict(self) -> dict[str, int | float | datetime | str | None]:
         if self.last_fix:
             last_fix = self.last_fix.strftime(self.DATE_FORMAT)
         else:
@@ -273,6 +273,7 @@ class Position:
 class GPSD(threading.Thread):
     gpsdhost: str | None = None
     gpsdport: int | None = None
+    sleep_time: int = 1
     fix_timeout: int = 120
     update_timeout: int = 120
     session: gps.gps = None
@@ -283,6 +284,7 @@ class GPSD(threading.Thread):
     last_clean: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
     elevation_report: StatusFile | None = None
     last_elevation: datetime = field(default_factory=lambda: datetime(2025, 1, 1, 0, 0, tzinfo=UTC))
+    last_hook: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
     lock: threading.Lock = field(default_factory=threading.Lock)
     running: bool = True
 
@@ -329,7 +331,7 @@ class GPSD(threading.Thread):
         except Exception as exp:
             logging.error(f"[GPSD-ng] Error while restarting gpsd: {exp}")
 
-    def connect(self) -> bool:
+    def connect(self) -> None:
         with self.lock:
             logging.info(f"[GPSD-ng] Trying to connect to {self.gpsdhost}:{self.gpsdport}")
             try:
@@ -339,11 +341,18 @@ class GPSD(threading.Thread):
                     mode=gps.WATCH_ENABLE | gps.WATCH_NEWSTYLE,
                 )
                 logging.info(f"[GPSD-ng] Connected to {self.gpsdhost}:{self.gpsdport}")
-                return True
+                self.sleep_time = 1
             except Exception as e:
                 logging.error(f"[GPSD-ng] Error while connecting to GPSD: {e}")
                 self.session = None
-        return False
+                logging.info(f"[GPS-ng] Going to sleep for {self.sleep_time}s")
+                self.sleep_time = min(self.sleep_time * 2, 30)
+                begin = datetime.now(tz=UTC)
+                while (
+                    self.running
+                    and (datetime.now(tz=UTC) - begin).total_seconds() < self.sleep_time
+                ):
+                    time.sleep(1)
 
     def is_connected(self):
         return self.session != None
@@ -386,24 +395,23 @@ class GPSD(threading.Thread):
                     logging.info(f"[GPSD-ng] Cleaning {device}")
 
     # ---------- MAIN LOOP ----------
+    def plugin_hook(self) -> None:
+        if (datetime.now(tz=UTC) - self.last_hook).total_seconds() < 10:
+            return
+        self.last_hook = datetime.now(tz=UTC)
+        if coords := self.get_position():
+            plugins.on("position_available", coords.to_dict())
+        else:
+            plugins.on("position_lost")
+
     def loop(self) -> None:
         logging.info(f"[GPSD-ng] Starting loop")
-        sleep_time = 1
         while self.running:
             self.clean()
             if not self.is_configured():
                 time.sleep(1)
             elif not self.session:
-                if self.connect():
-                    sleep_time = 1
-                else:
-                    logging.info(f"[GPS-ng] Going to sleep for {sleep_time}s")
-                    sleep_time = min(sleep_time * 2, 30)
-                    begin = datetime.now(tz=UTC)
-                    while (
-                        self.running and (datetime.now(tz=UTC) - begin).total_seconds() < sleep_time
-                    ):
-                        time.sleep(1)
+                self.connect()
             elif self.session.waiting(timeout=2) and self.session.read() == 0:
                 self.update()
             else:
@@ -412,6 +420,8 @@ class GPSD(threading.Thread):
                 )
                 self.session.close()
                 self.session = None
+            self.plugin_hook()
+
 
     def run(self) -> None:
         self.restart_gpsd()
@@ -716,7 +726,7 @@ class GPSD_ng(plugins.Plugin):
         logging.info(f"[GPSD-ng] Saving GPS to {gps_filename}")
         try:
             with open(gps_filename, "w+t") as fp:
-                json.dump(coords.to_json(), fp)
+                json.dump(coords.to_dict(), fp)
         except Exception as e:
             logging.error(f"[GPSD-ng] Error on saving gps coordinates: {e}")
 
