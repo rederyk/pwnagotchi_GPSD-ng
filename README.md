@@ -17,9 +17,10 @@ __Exemple__:\
 GPS module/dongle and/or Phone (IOS/Android) ------> GPSD ------> GPSD-ng ------> Pwnagotchi
 
 # Install GPSD server
-- Install binaries and lib:
-  - "apt-get install gpsd gpsd-clients python3-gps python3-geopy" or compile from gpsd repository
-  - Be sure to have the native gpsd python library installed (python3-gps)
+- Install binaries:
+  - APT method (version 3.22): ```apt-get install gpsd gpsd-clients python3-gps```
+  - Download and install (version 3.24) with ```dpkg -i```: https://archive.raspberrypi.org/debian/pool/untested/g/gpsd/
+  - Build from source (version 3.25): https://gpsd.gitlab.io/gpsd/building.html
 - Configure GPSD (/etc/default/gpsd) and uncomment one DEVICES:
 ```
 # Default settings for the gpsd init script and the hotplug wrapper.
@@ -69,7 +70,7 @@ You can configure several devices in DEVICES
 Ex: ```DEVICES="-s BAUDRATE /dev/ttyS0 tcp://PHONEIP:4352"```
 
 # Install plugin
-
+- Install GEOPY: ```apt-get install python3-geopy```
 - Copy gpsd-ng.py and gpsd-ng.html to your custom plugins directory
 
 # Configure plugin (Config.toml)
@@ -168,9 +169,20 @@ Note: During on_unfiltered_ap_list(), if an access point whith pcap files but wi
 Gps option is set to off. Position is update by the plugin to Bettercap, on handshake, internet_available and on_unfiltered_ap_list.
 
 ## Developpers
-This plugin adds two plugin hooks:  
--on_position_available(Position) and on_position_lost()
-- 
+This plugin adds two plugin hooks, triggered every 10 seconds:  
+- If a position is available, the hook ```on_position_available(coords)``` is called with a dictionnary (see below)
+- If no position is available, the hook ```on_position_lost() is called
+
+The coords dictionnary:
+- Latitude, Longitude (float)
+- Altitude (float): Sea elevation 
+- Speed (float): Horizontal speed
+- Date, Updated (datetime): Last fix
+- Mode (int 2 or 3), Fix (str): Fix mode (2D or 3D). 0 and 1 are removec
+- Sats (int), Sats_used(int): Nb of seen satellites and used
+- Device (str): GPS device (ex: /dev/ttyS0)
+- Accuracy (int): default 50
+All data are metric only.
 
 ## Troubleshooting: Have you tried to turn it off and on again?
 ### "[GPSD-ng] Error while importing matplotlib for generate_polar_plot()"
