@@ -168,7 +168,7 @@ class Position:
             Mode=self.mode,
             Fix=self.fix,
             Sats=self.seen_satellites,
-            Sats_Valid=self.used_satellites,
+            Sats_used=self.used_satellites,
             Device=self.device,
             Accuracy=self.accuracy,
         )
