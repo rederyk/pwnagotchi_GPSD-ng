@@ -96,7 +96,7 @@ main.plugins.gpsd-ng.update_timeout = 120 # default 120, Delay without update be
 main.plugins.gpsd-ng.fix_timeout = 120 # default 120, Delay without fix before deleting the position. 0 = no timeout
 main.plugins.gpsd-ng.use_open_elevation = true # if true, use open-elevation API to retreive missing altitudes. Use it if you have a poor GPS signal.
 main.plugins.gpsd-ng.save_elevations = true # if true, elevations cache will be saved to disk. Be carefull as it can grow fast if move a lot.
-main.plugins.gpsd-ng.view_mode = "compact" # "compact", "full", "none" 
+main.plugins.gpsd-ng.view_mode = "compact" # "compact", "full", "status", "none" 
 main.plugins.gpsd-ng.fields = "info,speed,altitude" # list or string of fields to display
 main.plugins.gpsd-ng.units = "metric" # "metric" or "imperial"
 main.plugins.gpsd-ng.display_precision = 6 # display precision for latitude and longitude
@@ -160,6 +160,8 @@ If you prefer a more traditionnal view, use "full" mode:
 
 You can show or not with the fields option. by default, it will display all.
 If you want a clear display, use "none", nothing will be display.
+
+If you like it very brief, try the "status" mode, only 4 letters in status bar.
 
 ## Web views
 You should take a look at the Web UI with fancy graphs ;-)
