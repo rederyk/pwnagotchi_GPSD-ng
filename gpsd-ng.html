@@ -201,8 +201,8 @@ console.error("An error occurred while retstarting GPSD:", error);
             <strong>Altitude</strong>: {{positions[dkey].format_altitude(units)}}, <strong>Speed</strong>:
             {{positions[dkey].format_speed(units)}}<br>
 
-            <strong>Sattelites</strong>: {{positions[dkey].used_satellites}} used/{{positions[dkey].viewed_satellites}}
-            viewed<br>
+            <strong>Sattelites</strong>: {{positions[dkey].used_satellites}} used/{{positions[dkey].seen_satellites}}
+            seen<br>
 
             <strong>Last fix</strong>:
             {% if positions[dkey].last_fix %}{{positions[dkey].last_fix.strftime('%d/%m/%Y %H:%M:%S %Z')}}
