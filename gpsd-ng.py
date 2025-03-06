@@ -581,7 +581,7 @@ class GPSD_ng(plugins.Plugin):
     __name__: str = "GPSD-ng"
     __GitHub__: str = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
     __author__: str = "@fmatray"
-    __version__: str = "1.7.1"
+    __version__: str = "1.7.2"
     __license__: str = "GPL3"
     __description__: str = (
         "Use GPSD server to save position on handshake. Can use mutiple gps device (serial, USB dongle, phone, etc.)"
@@ -617,14 +617,13 @@ class GPSD_ng(plugins.Plugin):
         DISPLAY_FIELDS = ["info", "altitude", "speed"]
         display_fields = self.options.get("fields", DISPLAY_FIELDS)
         if isinstance(display_fields, str):
-            self.display_fields = display_fields.split(",")
-        if isinstance(display_fields, list):
-            self.display_fields = [i.strip() for i in self.display_fields]
-            for field in self.display_fields:
-                if not field in self.display_fields:
-                    logging.error(f"[GPSD-ng] Wrong setting for fields: {field}.")
+            self.display_fields = list(map(str.strip, display_fields.split(",")))
+        elif isinstance(display_fields, list):
+            self.display_fields = list(map(str.strip, display_fields))
         else:
-            logging.error(f"[GPSD-ng] Wrong setting for fields: must be a list. Using default")
+            logging.error(
+                f"[GPSD-ng] Wrong setting for fields: must be a string or list. Using default"
+            )
             self.display_fields = DISPLAY_FIELDS
 
         if "longitude" not in self.display_fields:
@@ -692,14 +691,7 @@ class GPSD_ng(plugins.Plugin):
         except Exception:
             pass
         with ui._lock:
-            for element in [
-                "latitude",
-                "longitude",
-                "altitude",
-                "speed",
-                "gps",
-                "gps_status"
-            ]:
+            for element in ["latitude", "longitude", "altitude", "speed", "gps", "gps_status"]:
                 try:
                     ui.remove_element(element)
                 except KeyError:
