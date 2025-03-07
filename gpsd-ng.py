@@ -667,20 +667,21 @@ class GPSD_ng(plugins.Plugin):
         self.lost_face_2 = self.options.get("lost_face_1", self.lost_face_2)
         self.face_1 = self.options.get("face_1", self.face_1)
         self.face_2 = self.options.get("face_2", self.face_2)
-
-    def on_ready(self, agent) -> None:
         try:
             self.gpsd.start()
         except Exception as e:
             logging.critical(f"[GPSD-ng] Error with GPSD Thread: {e}")
             logging.critical(f"[GPSD-ng] Stop plugin")
             return
+        self.ready = True
+
+
+    def on_ready(self, agent) -> None:
         try:
             logging.info(f"[GPSD-ng] Disabling bettercap's gps module")
             agent.run("gps off")
         except Exception as e:
             logging.info(f"[GPSD-ng] Bettercap gps was already off.")
-        self.ready = True
 
     # ---------- UNLOAD ----------
     def on_unload(self, ui) -> None:
