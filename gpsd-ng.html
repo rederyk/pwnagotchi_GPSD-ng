@@ -92,7 +92,7 @@
 </style>
 {% endblock %}
 {% block script %}
-// Add events 
+// Add events
 document.addEventListener("DOMContentLoaded", () => {
 const refreshButtons = document.querySelectorAll('button[id^="refresh_"]');
 
@@ -134,7 +134,7 @@ console.error("An error occurred while fetching the image:", error);
 // Restart GPSD
 async function restartGPSD() {
 try {
-const response = await fetch(`${window.location.origin}/plugins/gpsd-ng/retart_gpsd`);
+const response = await fetch(`${window.location.origin}/plugins/gpsd-ng/restart_gpsd`);
 if (response.ok) {
 console.info("GPSD restarted");
 } else {

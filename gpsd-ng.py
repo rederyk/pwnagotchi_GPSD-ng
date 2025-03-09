@@ -242,7 +242,7 @@ class Position:
             fig = figure(figsize=(size, size))
             fig.patch.set_alpha(0)
 
-            ax = fig.add_axes([0.1, 0.1, 0.8, 0.8], polar=True, facecolor="#d5de9c")
+            ax = fig.add_axes((0.1, 0.1, 0.8, 0.8), polar=True, facecolor="#d5de9c")
             ax.patch.set_alpha(1)
             ax.set_theta_zero_location("N")
             ax.set_theta_direction(-1)
@@ -319,18 +319,6 @@ class GPSD(threading.Thread):
     def is_configured(self) -> bool:
         return self.gpsdhost != None and self.gpsdport != None
 
-    def restart_gpsd(self):
-        try:
-            subprocess.run(
-                ["systemctl", "restart", "gpsd"],
-                check=True,
-                timeout=20,
-            )
-            time.sleep(2)
-            logging.info(f"[GPSD-ng] GPSD restarted")
-        except Exception as exp:
-            logging.error(f"[GPSD-ng] Error while restarting gpsd: {exp}")
-
     def connect(self) -> None:
         with self.lock:
             logging.info(f"[GPSD-ng] Trying to connect to {self.gpsdhost}:{self.gpsdport}")
@@ -356,6 +344,31 @@ class GPSD(threading.Thread):
 
     def is_connected(self):
         return self.session != None
+
+    # ---------- RELOAD/ RESTART GPSD SERVER ----------
+    def reload_or_restart_gpsd(self):
+        try:
+            subprocess.run(
+                ["killall", "-SIGHUP", "gpsd"],
+                check=True,
+                timeout=5,
+            )
+            time.sleep(2)
+            logging.info(f"[GPSD-ng] GPSD reloaded")
+            return
+        except Exception as exp:
+            logging.error(f"[GPSD-ng] Error while reloading gpsd: {exp}")
+
+        try:
+            subprocess.run(
+                ["systemctl", "restart", "gpsd"],
+                check=True,
+                timeout=20,
+            )
+            time.sleep(2)
+            logging.info(f"[GPSD-ng] GPSD restarted")
+        except Exception as exp:
+            logging.error(f"[GPSD-ng] Error while restarting gpsd: {exp}")
 
     # ---------- UPDATE AND CLEAN ----------
     def update(self) -> None:
@@ -424,7 +437,7 @@ class GPSD(threading.Thread):
         if not self.is_configured():
             logging.critical(f"[GPSD-ng] GPSD thread not configured.")
             return
-        self.restart_gpsd()
+        self.reload_or_restart_gpsd()
         try:
             self.loop()
         except Exception as exp:
@@ -581,7 +594,7 @@ class GPSD_ng(plugins.Plugin):
     __name__: str = "GPSD-ng"
     __GitHub__: str = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
     __author__: str = "@fmatray"
-    __version__: str = "1.7.3"
+    __version__: str = "1.8.0"
     __license__: str = "GPL3"
     __description__: str = (
         "Use GPSD server to save position on handshake. Can use mutiple gps device (serial, USB dongle, phone, etc.)"
@@ -675,7 +688,6 @@ class GPSD_ng(plugins.Plugin):
             return
         self.ready = True
 
-
     def on_ready(self, agent) -> None:
         try:
             logging.info(f"[GPSD-ng] Disabling bettercap's gps module")
@@ -697,6 +709,10 @@ class GPSD_ng(plugins.Plugin):
                     ui.remove_element(element)
                 except KeyError:
                     pass
+
+    # ---------- BLUETOOTH ----------
+    def on_bluetooth_up(self, phone: dict):
+        self.gpsd.reload_or_restart_gpsd()
 
     # ---------- UPDATES ----------
     def update_bettercap_gps(self, agent, coords: Position) -> None:
@@ -1003,8 +1019,8 @@ class GPSD_ng(plugins.Plugin):
                     return self.gpsd.positions[device].generate_polar_plot()
                 except KeyError:
                     return error("Rendering with polar image")
-            case "retart_gpsd":
-                self.gpsd.restart_gpsd()
+            case "restart_gpsd":
+                self.gpsd.reload_or_restart_gpsd()
                 return "Done"
             case _:
                 return error("Unkown path")
