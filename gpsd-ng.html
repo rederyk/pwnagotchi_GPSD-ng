@@ -10,13 +10,8 @@
 {% block styles %}
 {{ super() }}
 <style>
-    .statistics {
-        width: 100%;
-        text-align: center;
-    }
-
     h1.used {
-        color: green;
+        color: #d5de9c;
     }
 
     h1.notused {
@@ -27,205 +22,166 @@
         color: orangered;
     }
 
-    table {
-        table-layout: auto;
-        width: 100%;
-    }
-
-    table,
-    th,
-    td {
-        border: 1px solid;
-        border-collapse: collapse;
-    }
-
-    th,
-    td {
-        padding: 15px;
+    .ui-content {
         text-align: center;
+        padding: 15px;
     }
 
-    @media screen and (max-width:700px) {
+    .ui-btn-success {
+        background-color: #d5de9c;
+    }
 
-        table,
-        tr,
-        td {
-            padding: 0;
-            border: 1px solid;
-        }
-
-        table {
-            border: none;
-        }
-
-        tr:first-child,
-        thead,
-        th {
-            display: none;
-            border: none;
-        }
-
-        tr {
-            float: left;
-            width: 100%;
-            margin-bottom: 2em;
-        }
-
-        td {
-            float: center;
-            width: 100%;
-            padding: 1em;
-        }
-
-        td::before {
-            content: attr(data-label);
-            word-wrap: break-word;
-            color: white;
-            border-right: 2px solid;
-            width: 20%;
-            float: left;
-            padding: 1em;
-            font-weight: bold;
-            margin: -1em 1em -1em -1em;
-        }
+    .ui-btn-error {
+        background-color: orangered;
     }
 </style>
 {% endblock %}
 {% block script %}
 // Add events
 document.addEventListener("DOMContentLoaded", () => {
-const refreshButtons = document.querySelectorAll('button[id^="refresh_"]');
+const refresh_images = document.querySelector('#refresh_images');
 
-refreshButtons.forEach(button => {
-const device = button.dataset.device;
-const target = button.dataset.target;
-button.addEventListener("click", async () => {
-await refreshPolarImage(device, target);
+refresh_images.addEventListener("click", async () => {
+await refreshPolarImage(refresh_images);
 });
-});
+
 
 const restart_gpsd = document.querySelector('#restart_gpsd');
 restart_gpsd.addEventListener("click", async () => {
-await restartGPSD();
+await restartGPSD(restart_gpsd);
 });
 });
 
+
 // Refresh polar Image
-async function refreshPolarImage(device, target) {
-const polarImage = document.getElementById(target);
-if (!polarImage) {
-console.error("Image element not found");
-return;
-}
+async function refreshPolarImage(button) {
+const images = document.querySelectorAll('img[id^="polar_"]');
+
+for (const image of images) {
 try {
-const response = await fetch(`${window.location.origin}/plugins/gpsd-ng/polar?device=`+device);
+const response = await fetch(`${window.location.origin}/plugins/gpsd-ng/polar?device=${image.dataset.device}`);
 if (response.ok) {
 const base64Image = await response.text();
-polarImage.src = `data:image/png;base64,${base64Image}`;
+image.src = `data:image/png;base64,${base64Image}`;
+button.classList.add('ui-btn-success');
 } else {
 console.error("Failed to fetch the image");
+button.classList.add('ui-btn-error');
 }
 } catch (error) {
 console.error("An error occurred while fetching the image:", error);
+button.classList.add('ui-btn-error');
 }
 }
 
+setTimeout(() => {
+button.classList.remove('ui-btn-success');
+button.classList.remove('ui-btn-error');
+}, 5000);
+}
 
 // Restart GPSD
-async function restartGPSD() {
+async function restartGPSD(button) {
 try {
 const response = await fetch(`${window.location.origin}/plugins/gpsd-ng/restart_gpsd`);
 if (response.ok) {
 console.info("GPSD restarted");
+button.classList.add('ui-btn-success');
+
 } else {
 console.error("Failed to restart GPSD");
+button.classList.add('ui-btn-error');
 }
 } catch (error) {
 console.error("An error occurred while retstarting GPSD:", error);
+button.classList.add('ui-btn-error');
 }
-}
+
+setTimeout(() => {
+button.classList.remove('ui-btn-success');
+button.classList.remove('ui-btn-error');
+}, 5000);
+};
 
 {% endblock %}
 {% block content %}
-<div class="statistics">
+<div data-role="header">
     <h1>GPS Statistics</h1>
+</div>
+<div role="main" class="ui-content">
     <p>
-        {{statistics["nb_devices"]}} {% if statistics["nb_devices"] <= 1 %}device{% else %}devices{%endif%} found<br>
-            {{statistics["nb_position_files"]}} position files for {{statistics["nb_pcap_files"]}} pcap files:
-            {{statistics["completeness"]}}% of completeness<br>
+        {{statistics["nb_devices"]}} {% if statistics["nb_devices"] <= 1 %}device{% else %}devices{%endif%} found {% if
+            not device in positions %}(No device used)<br>{% endif %}
+            <strong>{{statistics["completeness"]}}% of completeness</strong>
+            ({{statistics["nb_position_files"]}} position files for {{statistics["nb_pcap_files"]}} pcap files)<br>
             {{statistics["nb_cached_elevation"]}} cached elevations
     </p>
-    {% if not device in positions %}
-    <p>
-        No device used.
-    </p>
-    {% endif %}
 </div>
-<div>
-    <button id="restart_gpsd" aria-label="Restart GPSD server">Restart GPSD server</button>
-</div>
-<table id="tableOptions">
-    <tr>
-        <th>GPS device</th>
-        <th>Polar Image</th>
-    </tr>
-    {% for dkey in positions %}
-    <tr>
-        <td>
-            {% if positions[dkey] %}
+{% for dkey in positions %}
+<hr>
+<div class="ui-grid-a ui-responsive ui-content">
 
-            {% if device == dkey %}
-            {% set header_class="used" %}
-            {% set usage_msg="used" %}
-            {% elif positions[dkey].is_fixed() %}
-            {% set header_class="notused" %}
-            {% set usage_msg="not used" %}
-            {% else %}
-            {% set header_class="nofix" %}
-            {% set usage_msg="no fix" %}
-            {% endif %}
+    <div class="ui-block-a">
+        {% if positions[dkey] %}
 
-            <h1 class="{{header_class}}">{{positions[dkey].device}} ({{usage_msg}})</h1>
-            {% set lat_long = positions[dkey].format_lat_long() %}
-            <h2>
-                {% if positions[dkey].is_fixed() %}
-                <a href="https://www.openstreetmap.org/?mlat={{positions[dkey].latitude}}&mlon={{positions[dkey].longitude}}&zoom=18"
-                    target="_blank">
-                    {{lat_long[0]}}, {{lat_long[1]}} ({{positions[dkey].fix}})
-                </a>
-                {% else %}
+        {% if device == dkey %}
+        {% set header_class="used" %}
+        {% set usage_msg="used" %}
+        {% elif positions[dkey].is_fixed() %}
+        {% set header_class="notused" %}
+        {% set usage_msg="not used" %}
+        {% else %}
+        {% set header_class="nofix" %}
+        {% set usage_msg="no fix" %}
+        {% endif %}
+
+        <h1 class="{{header_class}}">{{positions[dkey].device}} ({{usage_msg}})</h1>
+        {% set lat_long = positions[dkey].format_lat_long() %}
+        <h2>
+            {% if positions[dkey].is_fixed() %}
+            <a href="https://www.openstreetmap.org/?mlat={{positions[dkey].latitude}}&mlon={{positions[dkey].longitude}}&zoom=18"
+                target="_blank">
                 {{lat_long[0]}}, {{lat_long[1]}} ({{positions[dkey].fix}})
-                {% endif %}
-            </h2>
-
-            <strong>Altitude</strong>: {{positions[dkey].format_altitude(units)}}, <strong>Speed</strong>:
-            {{positions[dkey].format_speed(units)}}<br>
-
-            <strong>Sattelites</strong>: {{positions[dkey].used_satellites}} used/{{positions[dkey].seen_satellites}}
-            seen<br>
-
-            <strong>Last fix</strong>:
-            {% if positions[dkey].last_fix %}{{positions[dkey].last_fix.strftime('%d/%m/%Y %H:%M:%S %Z')}}
-            ({{positions[dkey].last_fix_ago}}s ago)
-            {% else %}No date{% endif %}<br>
-
-            <strong>Last update</strong>:
-            {% if positions[dkey].last_update %}{{positions[dkey].last_update.strftime('%d/%m/%Y %H:%M:%S %Z')}}
-            ({{positions[dkey].last_update_ago}}s ago)
-            {% else %}No date{% endif %}<br>
-
-            <strong>Accuracy</strong>: {{positions[dkey].accuracy}}<br>
+            </a>
             {% else %}
-            <strong>No data</strong>
+            {{lat_long[0]}}, {{lat_long[1]}} ({{positions[dkey].fix}})
             {% endif %}
-        </td>
-        <td>
-            <img id="polar_{{loop.index}}" src="data:image/png;base64,{{positions[dkey].generate_polar_plot()}}"
-                alt="Polar Image for {{dkey}}" aria-label="Polar Image for {{dkey}}" />
-            <button id="refresh_{{loop.index}}" data-target="polar_{{loop.index}}" data-device="{{dkey}}"
-                aria-label="Refresh Polar Image">Refresh</button>
-        </td>
+        </h2>
+
+        <strong>Altitude</strong>: {{positions[dkey].format_altitude(units)}}, <strong>Speed</strong>:
+        {{positions[dkey].format_speed(units)}}<br>
+        <strong>Sattelites</strong>: {{positions[dkey].used_satellites}}
+        used/{{positions[dkey].seen_satellites}}
+        seen<br>
+        <strong>Last fix</strong>:
+        {% if positions[dkey].last_fix %}{{positions[dkey].last_fix.strftime('%d/%m/%Y %H:%M:%S %Z')}}
+        ({{positions[dkey].last_fix_ago}}s ago)
+        {% else %}No date{% endif %}<br>
+
+        <strong>Last update</strong>:
+        {% if positions[dkey].last_update %}{{positions[dkey].last_update.strftime('%d/%m/%Y %H:%M:%S %Z')}}
+        ({{positions[dkey].last_update_ago}}s ago)
+        {% else %}No date{% endif %}<br>
+
+        <strong>Accuracy</strong>: {{positions[dkey].accuracy}}<br>
+        {% else %}
+        <strong>No data</strong><br>
+        {% endif %}
+    </div>
+    <div class="ui-block-b">
+        <img id="polar_{{loop.index}}" data-device="{{dkey}}"
+            src="data:image/png;base64,{{positions[dkey].generate_polar_plot()}}" alt="Polar Image for {{dkey}}"
+            aria-label="Polar Image for {{dkey}}" />
+    </div>
     </tr>
-    {% endfor %}
-</table>
+</div>
+{% endfor %}
+<div data-role="footer">
+    <div data-role="controlgroup" data-type="horizontal">
+        <a id="restart_gpsd" aria-label="Restart GPSD server"
+            class="ui-link ui-btn ui-icon-refresh ui-btn-icon-left">Restart&nbsp;GPSD&nbsp;server</a>
+        <a id="refresh_images" aria-label="Refresh Polar Image"
+            class="ui-link ui-btn ui-icon-refresh ui-btn-icon-left">Refresh&nbsp;all&nbsp;images</a>
+    </div>
+</div>
 {% endblock %}
