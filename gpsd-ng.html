@@ -11,7 +11,7 @@
 {{ super() }}
 <style>
     h1.used {
-        color: #d5de9c;
+        color: #316931;
     }
 
     h1.notused {
@@ -111,7 +111,7 @@ button.classList.remove('ui-btn-error');
 <div role="main" class="ui-content">
     <p>
         {{statistics["nb_devices"]}} {% if statistics["nb_devices"] <= 1 %}device{% else %}devices{%endif%} found {% if
-            not device in positions %}(No device used)<br>{% endif %}
+            not device in positions %}(No device used){% endif %}<br>
             <strong>{{statistics["completeness"]}}% of completeness</strong>
             ({{statistics["nb_position_files"]}} position files for {{statistics["nb_pcap_files"]}} pcap files)<br>
             {{statistics["nb_cached_elevation"]}} cached elevations

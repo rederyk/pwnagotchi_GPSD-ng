@@ -39,7 +39,7 @@ import os
 import subprocess
 from glob import glob
 from dataclasses import dataclass, field
-from typing import Self, Any
+from typing import Any, Self, Optional, List, Dict
 import time
 from copy import deepcopy
 import math
@@ -71,8 +71,8 @@ class Position:
     longitude: float = field(default=float("NaN"))
     altitude: float = field(default=float("NaN"))
     speed: float = field(default=float("NaN"))
-    last_update: datetime | None = None
-    last_fix: datetime | None = None
+    last_update: Optional[datetime] = None
+    last_fix: Optional[datetime] = None
     mode: int = 0
     satellites: list = field(default_factory=list)
     device: str = field(default="missing", init=True)
@@ -84,23 +84,23 @@ class Position:
 
     @property
     def used_satellites(self) -> int:
-        return len([s for s in self.satellites if s.used])
+        return sum(1 for s in self.satellites if s.used)
 
     @property
     def fix(self) -> str:
         return self.FIXES.get(self.mode, "Mode error")
 
     @property
-    def last_update_ago(self) -> int | None:
-        if self.last_update:
-            return round((datetime.now(tz=UTC) - self.last_update).total_seconds())
-        return None
+    def last_update_ago(self) -> Optional[int]:
+        if not self.last_update:
+            return None
+        return round((datetime.now(tz=UTC) - self.last_update).total_seconds())
 
     @property
-    def last_fix_ago(self) -> int | None:
-        if self.last_fix:
-            return round((datetime.now(tz=UTC) - self.last_fix).total_seconds())
-        return None
+    def last_fix_ago(self) -> Optional[int]:
+        if not self.last_fix:
+            return None
+        return round((datetime.now(tz=UTC) - self.last_fix).total_seconds())
 
     def __lt__(self, other: Self) -> bool:
         if self.last_fix and other.last_fix:
@@ -138,22 +138,22 @@ class Position:
     def is_valid(self) -> bool:
         return gps.isfinite(self.latitude) and gps.isfinite(self.longitude) and self.mode >= 2
 
-    def is_old(self, date: datetime | None, max_seconds: int) -> bool | None:
+    def is_old(self, date: Optional[datetime], max_seconds: int) -> Optional[bool]:
         if not date:
             return None
         return (datetime.now(tz=UTC) - date).total_seconds() > max_seconds
 
-    def is_update_old(self, max_seconds: int) -> bool | None:
+    def is_update_old(self, max_seconds: int) -> Optional[bool]:
         return self.is_old(self.last_update, max_seconds)
 
-    def is_fix_old(self, max_seconds: int) -> bool | None:
+    def is_fix_old(self, max_seconds: int) -> Optional[bool]:
         return self.is_old(self.last_fix, max_seconds)
 
     def is_fixed(self) -> bool:
         return self.mode >= 2
 
     # ---------- JSON DUMP ----------
-    def to_dict(self) -> dict[str, int | float | datetime | str | None]:
+    def to_dict(self) -> dict[str, int | float | datetime | Optional[str]]:
         if self.last_fix:
             last_fix = self.last_fix.strftime(self.DATE_FORMAT)
         else:
@@ -219,7 +219,7 @@ class Position:
         spd = self.format_speed(units)
         return info, lat, long, alt, spd
 
-    def generate_polar_plot(self) -> str | None:
+    def generate_polar_plot(self) -> Optional[str]:
         """
         Return a polar image (base64) of seen satellites.
         Thanks to https://github.com/rai68/gpsd-easy/blob/main/gpsdeasy.py
@@ -271,18 +271,18 @@ class Position:
 
 @dataclass(slots=True)
 class GPSD(threading.Thread):
-    gpsdhost: str | None = None
-    gpsdport: int | None = None
+    gpsdhost: Optional[str] = None
+    gpsdport: Optional[int] = None
     sleep_time: int = 1
     fix_timeout: int = 120
     update_timeout: int = 120
     session: gps.gps = None
     positions: dict = field(default_factory=dict)  # Device:Position dictionnary
-    main_device: str | None = None
-    last_position: Position | None = None
+    main_device: Optional[str] = None
+    last_position: Optional[Position] = None
     elevation_data: dict = field(default_factory=dict)
     last_clean: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
-    elevation_report: StatusFile | None = None
+    elevation_report: Optional[StatusFile] = None
     last_elevation: datetime = field(default_factory=lambda: datetime(2025, 1, 1, 0, 0, tzinfo=UTC))
     last_hook: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -317,7 +317,7 @@ class GPSD(threading.Thread):
         logging.info(f"[GPSD-ng] {len(self.elevation_data)} locations already in cache")
 
     def is_configured(self) -> bool:
-        return self.gpsdhost != None and self.gpsdport != None
+        return (self.gpsdhost, self.gpsdport) != (None, None)
 
     def connect(self) -> None:
         with self.lock:
@@ -343,7 +343,7 @@ class GPSD(threading.Thread):
                     time.sleep(1)
 
     def is_connected(self):
-        return self.session != None
+        return self.session is not None
 
     # ---------- RELOAD/ RESTART GPSD SERVER ----------
     def reload_or_restart_gpsd(self):
@@ -427,7 +427,7 @@ class GPSD(threading.Thread):
                 self.update()
             else:
                 logging.debug(
-                    "[GPSD-ng] Closing connection to GPSD: {self.gpsdhost}:{self.gpsdport}"
+                    f"[GPSD-ng] Closing connection to GPSD: {self.gpsdhost}:{self.gpsdport}"
                 )
                 self.session.close()
                 self.session = None
@@ -451,7 +451,7 @@ class GPSD(threading.Thread):
             logging.error(f"[GPSD-ng] Error on join(): {e}")
 
     # ---------- POSITION ----------
-    def get_position_device(self) -> str | None:
+    def get_position_device(self) -> Optional[str]:
         if not self.is_configured():
             return None
         with self.lock:
@@ -472,7 +472,7 @@ class GPSD(threading.Thread):
                 logging.debug(f"[GPSD-ng] No valid position")
             return None
 
-    def get_position(self) -> Position | None:
+    def get_position(self) -> Optional[Position]:
         try:
             if device := self.get_position_device():
                 self.last_position = self.positions[device]
@@ -869,7 +869,7 @@ class GPSD_ng(plugins.Plugin):
             case _:
                 pass
 
-    def get_statistics(self) -> dict[str, int | float] | None:
+    def get_statistics(self) -> Optional[dict[str, int | float]]:
         if not self.ready:
             return None
 
@@ -902,7 +902,7 @@ class GPSD_ng(plugins.Plugin):
             case _:
                 pass
 
-    def lost_mode(self, ui, coords: Position | None) -> None:
+    def lost_mode(self, ui) -> None:
         if not self.ready:
             return
 
@@ -981,7 +981,7 @@ class GPSD_ng(plugins.Plugin):
         self.ui_counter = (self.ui_counter + 1) % 5
         with ui._lock:
             if not (coords := self.gpsd.get_position()):
-                self.lost_mode(ui, coords)
+                self.lost_mode(ui)
                 return
             self.display_face(ui, self.face_1, self.face_2)
             match self.view_mode:
