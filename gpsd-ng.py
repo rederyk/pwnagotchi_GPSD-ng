@@ -9,25 +9,27 @@
 # - copy this plugin to custom plugin
 #
 # Config.toml:
-# main.plugins.gpsd-ng.enabled = true
+# [main.plugins.gpsd-ng]
+# enabled = true
 
 # Options with default settings.
 # Don't add if you don't need customisation
-# main.plugins.gpsd-ng.gpsdhost = "127.0.0.1"
-# main.plugins.gpsd-ng.gpsdport = 2947
-# main.plugins.gpsd-ng.main_device = "/dev/ttyS0" # default None
-# main.plugins.gpsd-ng.use_open_elevation = true
-# main.plugins.gpsd-ng.save_elevations = true
-# main.plugins.gpsd-ng.view_mode = "compact" # "compact", "full", "status", "none"
-# main.plugins.gpsd-ng.fields = "info,speed,altitude" # list or string of fields to display
-# main.plugins.gpsd-ng.units = "metric" # "metric", "imperial"
-# main.plugins.gpsd-ng.display_precision = 6 # display precision for latitude and longitude
-# main.plugins.gpsd-ng.position = "127,64"
-# main.plugins.gpsd-ng.show_faces = true # if false, doesn't show face. Ex if you use PNG faces
-# main.plugins.gpsd-ng.lost_face_1 = "(O_o )"
-# main.plugins.gpsd-ng.lost_face_2 = "( o_O)"
-# main.plugins.gpsd-ng.face_1 = "(•_• )"
-# main.plugins.gpsd-ng.face_2 = "( •_•)"
+# [main.plugins.gpsd-ng]
+# gpsdhost = "127.0.0.1"
+# gpsdport = 2947
+# main_device = "/dev/ttyS0" # default None
+# use_open_elevation = true
+# save_elevations = true
+# view_mode = "compact" # "compact", "full", "status", "none"
+# fields = "info,speed,altitude" # list or string of fields to display
+# units = "metric" # "metric", "imperial"
+# display_precision = 6 # display precision for latitude and longitude
+# position = "127,64"
+# show_faces = true # if false, doesn't show face. Ex if you use PNG faces
+# lost_face_1 = "(O_o )"
+# lost_face_2 = "( o_O)"
+# face_1 = "(•_• )"
+# face_2 = "( •_•)"
 
 import base64
 import io
@@ -599,7 +601,6 @@ class GPSD_ng(plugins.Plugin):
     __description__: str = (
         "Use GPSD server to save position on handshake. Can use mutiple gps device (serial, USB dongle, phone, etc.)"
     )
-
     __help__: str = (
         "Use GPSD server to save position on handshake. Can use mutiple gps device (serial, USB dongle, phone, etc.)"
     )
