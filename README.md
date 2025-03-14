@@ -30,14 +30,14 @@ GPS module/dongle and/or Phone (IOS/Android) ------> GPSD ------> GPSD-ng ------
 - Install binaries:
   - __version 3.22__: APT method: ```apt-get install gpsd gpsd-clients python3-gps```
   - __version 3.24__: 
-    - Download: https://archive.raspberrypi.org/debian/pool/untested/g/gpsd/
+    - Download in a folder the following packages from https://archive.raspberrypi.org/debian/pool/untested/g/gpsd/:
       - gpsd_3.24-1~rpt1_arm64.deb
       - gpsd-clients_3.24-1~rpt1_arm64.deb
       - gpsd-tools_3.24-1~rpt1_arm64.deb
       - libgps29_3.24-1~rpt1_arm64.deb
       - python3-gps_3.24-1~rpt1_arm64.deb
-    - Install with ```dpkg -i PACKAGE.deb```: 
-  - __version 3.25__: Build from source: https://gpsd.gitlab.io/gpsd/building.html
+    - Install with ```dpkg -i *.deb```
+  - __version 3.25__: Build from source (https://gpsd.gitlab.io/gpsd/building.html)
 - Configure GPSD (/etc/default/gpsd) and uncomment one DEVICES:
 ```
 # Default settings for the gpsd init script and the hotplug wrapper.
