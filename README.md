@@ -28,9 +28,16 @@ GPS module/dongle and/or Phone (IOS/Android) ------> GPSD ------> GPSD-ng ------
 
 # Install GPSD server
 - Install binaries:
-  - APT method (version 3.22): ```apt-get install gpsd gpsd-clients python3-gps```
-  - Download and install (version 3.24) with ```dpkg -i```: https://archive.raspberrypi.org/debian/pool/untested/g/gpsd/
-  - Build from source (version 3.25): https://gpsd.gitlab.io/gpsd/building.html
+  - __version 3.22__: APT method: ```apt-get install gpsd gpsd-clients python3-gps```
+  - __version 3.24__: 
+    - Download: https://archive.raspberrypi.org/debian/pool/untested/g/gpsd/
+      - gpsd_3.24-1~rpt1_arm64.deb
+      - gpsd-clients_3.24-1~rpt1_arm64.deb
+      - gpsd-tools_3.24-1~rpt1_arm64.deb
+      - libgps29_3.24-1~rpt1_arm64.deb
+      - python3-gps_3.24-1~rpt1_arm64.deb
+    - Install with ```dpkg -i PACKAGE.deb```: 
+  - __version 3.25__: Build from source: https://gpsd.gitlab.io/gpsd/building.html
 - Configure GPSD (/etc/default/gpsd) and uncomment one DEVICES:
 ```
 # Default settings for the gpsd init script and the hotplug wrapper.
@@ -66,7 +73,7 @@ GPSD_OPTIONS="-n" # add -D3 if you need to debug
   - Install a GPS app:
     - __Android__(not tested):
       - BlueNMEA: https://github.com/MaxKellermann/BlueNMEA
-      - gpsdRealay: https://github.com/project-kaat/gpsdRelay
+      - gpsdRelay: https://github.com/project-kaat/gpsdRelay
     - __IOS__: GPS2IP (tested but paid app)
       - Set "operate in background mode"
       - Set "Connection Method" -> "Socket" -> "Port Number" -> 4352
@@ -85,27 +92,29 @@ Ex: ```DEVICES="-s BAUDRATE /dev/ttyS0 tcp://PHONEIP:4352"```
 
 # Configure plugin (Config.toml)
 ```
-main.plugins.gpsd.enabled = true
+[main.plugins.gpsd]
+enabled = true
 
 # Options with default settings.
 # Add only if you need customisation
-main.plugins.gpsd-ng.gpsdhost = "127.0.0.1"
-main.plugins.gpsd-ng.gpsdport = 2947
-main.plugins.gpsd-ng.main_device = "/dev/ttyS0" # if not provided, the puglin will try to retreive the most accurate position
-main.plugins.gpsd-ng.update_timeout = 120 # default 120, Delay without update before deleting the position. 0 = no timeout
-main.plugins.gpsd-ng.fix_timeout = 120 # default 120, Delay without fix before deleting the position. 0 = no timeout
-main.plugins.gpsd-ng.use_open_elevation = true # if true, use open-elevation API to retreive missing altitudes. Use it if you have a poor GPS signal.
-main.plugins.gpsd-ng.save_elevations = true # if true, elevations cache will be saved to disk. Be carefull as it can grow fast if move a lot.
-main.plugins.gpsd-ng.view_mode = "compact" # "compact", "full", "status", "none" 
-main.plugins.gpsd-ng.fields = "info,speed,altitude" # list or string of fields to display
-main.plugins.gpsd-ng.units = "metric" # "metric" or "imperial"
-main.plugins.gpsd-ng.display_precision = 6 # display precision for latitude and longitude
-main.plugins.gpsd-ng.position = "127,64"
-main.plugins.gpsd-ng.show_faces = true # if false, doesn't show face. Ex if you use PNG faces
-main.plugins.gpsd-ng.lost_face_1 = "(O_o )"
-main.plugins.gpsd-ng.lost_face_2 = "( o_O)"
-main.plugins.gpsd-ng.face_1 = "(•_• )"
-main.plugins.gpsd-ng.face_2 = "( •_•)"
+gpsdhost = "127.0.0.1"
+gpsdport = 2947
+main_device = "/dev/ttyS0" # if not provided, the puglin will try to retreive the most accurate position
+wifi_positioning = false # Onlly in AUTO mode, tries 
+update_timeout = 120 # default 120, Delay without update before deleting the position. 0 = no timeout
+fix_timeout = 120 # default 120, Delay without fix before deleting the position. 0 = no timeout
+use_open_elevation = true # if true, use open-elevation API to retreive missing altitudes. Use it if you have a poor GPS signal.
+save_elevations = true # if true, elevations cache will be saved to disk. Be carefull as it can grow fast if move a lot.
+view_mode = "compact" # "compact", "full", "status", "none" 
+fields = "info,speed,altitude" # list or string of fields to display
+units = "metric" # "metric" or "imperial"
+display_precision = 6 # display precision for latitude and longitude
+position = "127,64"
+show_faces = true # if false, doesn't show face. Ex if you use PNG faces
+lost_face_1 = "(O_o )"
+lost_face_2 = "( o_O)"
+face_1 = "(•_• )"
+face_2 = "( •_•)"
 ```
 
 # Usage
@@ -128,7 +137,12 @@ If update_timeout is set to 0, positions never expire.
 After a delay (set by fix_timeout) without data fix for a device, the last position will be deleted.  
 If fix_timeout is set to 0, positions fix never expire. Usefull for keeping last position when goind indoor.
 
-## Improve positioning with RTCM (need gpsd 3.25)
+## Wifi positioning
+Only available with automode.  
+The plugin tries to guess the current position by calculation a median location of surrounding wifis.
+This location is only used, if a gps module is not available and will only be saved on handshake, if the no previous position was saved.
+
+## Improve positioning with RTCM (need gpsd > 3.24)
 If you have a GPs module or dongle with RTCM capabilities, you can activate with GPSD.
 Exemple with a Ublox (firmware 34.10) and GPSD 3.25:
 - ublox setup:
