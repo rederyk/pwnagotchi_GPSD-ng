@@ -42,7 +42,6 @@ import subprocess
 from glob import glob
 from dataclasses import dataclass, field
 from typing import Any, Self, Optional
-import time
 from copy import deepcopy
 import math
 import statistics
@@ -76,12 +75,11 @@ class Position:
     longitude: float = field(default=float("NaN"))
     altitude: float = field(default=float("NaN"))
     speed: float = field(default=float("NaN"))
-    last_update: Optional[datetime] = None
+    accuracy: float = field(default=float("NaN"))
     last_fix: Optional[datetime] = None
     mode: int = 0
+    last_update: Optional[datetime] = None
     satellites: list = field(default_factory=list)
-
-    accuracy: float = field(default=float("NaN"))
     dummy: bool = False
     header: str = ""
 
@@ -131,22 +129,25 @@ class Position:
             self.last_update = datetime.now(tz=UTC)  # Don't use fix.time cause it's not reliable
 
     def update_fix(self, fix: gps.gpsfix, valid: int) -> None:
-        self.set_attr("latitude", fix.latitude, valid, gps.LATLON_SET)
-        self.set_attr("longitude", fix.longitude, valid, gps.LATLON_SET)
-        self.set_attr("speed", fix.speed, valid, gps.SPEED_SET)
-        self.set_attr("mode", fix.mode, valid, gps.MODE_SET)
-        if gps.MODE_SET & valid:
-            now = datetime.now(tz=UTC)
-            if fix.mode >= 2:
-                self.last_fix = now  # Don't use fix.time cause it's not reliable
-            elif (
-                self.last_fix and (now - self.last_fix).total_seconds() > 10
-            ):  # reset after 10s without fix
-                self.latitude = float("NaN")
-                self.longitude = float("NaN")
-                self.altitude = float("NaN")
-                self.speed = float("NaN")
-        self.accuracy = 50
+        if not gps.MODE_SET & valid:
+            return
+        now = datetime.now(tz=UTC)
+        if fix.mode >= 2:
+            self.last_fix = now  # Don't use fix.time cause it's not reliable
+            self.set_attr("latitude", fix.latitude, valid, gps.LATLON_SET)
+            self.set_attr("longitude", fix.longitude, valid, gps.LATLON_SET)
+            self.set_attr("speed", fix.speed, valid, gps.SPEED_SET)
+            self.set_attr("mode", fix.mode, valid, gps.MODE_SET)
+            self.accuracy = 50
+            return
+        # reset fix after 10s without fix
+        if self.last_fix and (now - self.last_fix).total_seconds() < 10:
+            return
+        self.latitude = float("NaN")
+        self.longitude = float("NaN")
+        self.altitude = float("NaN")
+        self.speed = float("NaN")
+        self.accuracy = float("NaN")
 
     def update_satellites(self, satellites: list[gps.gpsdata.satellite], valid: int) -> None:
         self.set_attr("satellites", satellites, valid, gps.SATELLITE_SET)
@@ -183,6 +184,7 @@ class Position:
             Longitude=self.longitude,
             Altitude=self.altitude,
             Speed=self.speed * gps.KNOTS_TO_MPS,
+            Accuracy=self.accuracy,
             Date=last_fix,
             Updated=last_fix,  # Wigle plugin
             Mode=self.mode,
@@ -190,7 +192,7 @@ class Position:
             Sats=self.seen_satellites,
             Sats_used=self.used_satellites,
             Device=self.device,
-            Accuracy=self.accuracy,
+            Dummy=self.dummy,
         )
 
     # ---------- FORMAT ----------
@@ -295,7 +297,6 @@ class Position:
 class GPSD(threading.Thread):
     gpsdhost: Optional[str] = None
     gpsdport: Optional[int] = None
-    sleep_time: int = 1
     fix_timeout: int = 120
     update_timeout: int = 120
     session: gps.gps = None
@@ -339,13 +340,13 @@ class GPSD(threading.Thread):
         if save_elevations:
             self.elevation_report = StatusFile(cache_file, data_format="json")
             self.elevation_data = self.elevation_report.data_field_or("elevations", default=dict())
-        logging.info(f"{self.header} {len(self.elevation_data)} Thread configured")
+        logging.info(f"{self.header} Thread configured")
         logging.info(f"{self.header} {len(self.elevation_data)} locations already in cache")
 
     def is_configured(self) -> bool:
         return (self.gpsdhost, self.gpsdport) != (None, None)
 
-    def connect(self) -> None:
+    def connect(self) -> bool:
         with self.lock:
             logging.info(f"{self.header} Trying to connect to {self.gpsdhost}:{self.gpsdport}")
             try:
@@ -355,19 +356,19 @@ class GPSD(threading.Thread):
                     mode=gps.WATCH_ENABLE | gps.WATCH_NEWSTYLE,
                 )
                 logging.info(f"{self.header} Connected to {self.gpsdhost}:{self.gpsdport}")
-                self.sleep_time = 1
             except Exception as e:
-                logging.error(
-                    f"{self.header} Error while connecting: {e}. Sleeping for {self.sleep_time}s"
-                )
+                logging.error(f"{self.header} Error while connecting: {e}")
                 self.session = None
-                self.sleep_time = min(self.sleep_time * 2, 30)
-                if self.sleep_time > 15:
-                    self.reload_or_restart_gpsd()
-                self.exit.wait(self.sleep_time)
+                return False
+        return True
 
-    def is_connected(self):
+    def is_connected(self) -> bool:
         return self.session is not None
+
+    def close(self):
+        logging.info(f"{self.header} GPSD connection closed")
+        self.session.close()
+        self.session = None
 
     # ---------- RELOAD/ RESTART GPSD SERVER ----------
     def reload_or_restart_gpsd(self):
@@ -378,7 +379,7 @@ class GPSD(threading.Thread):
                 check=True,
                 timeout=5,
             )
-            time.sleep(2)
+            self.exit.wait(2)
             logging.info(f"{self.header} GPSD reloaded")
             return
         except subprocess.CalledProcessError as exp:
@@ -393,7 +394,7 @@ class GPSD(threading.Thread):
                 check=True,
                 timeout=20,
             )
-            time.sleep(2)
+            self.exit.wait(2)
             logging.info(f"{self.header} GPSD restarted")
         except subprocess.CalledProcessError as exp:
             logging.error(f"{self.header} Error while restarting gpsd: {exp}")
@@ -486,25 +487,29 @@ class GPSD(threading.Thread):
 
     def loop(self) -> None:
         logging.info(f"{self.header} Starting gpsd thread loop")
-        nb_retries = 0
+        connection_errors = 0
+
         while not self.exit.is_set():
-            self.clean()
-            if not self.session:
-                self.connect()
-            elif self.session.waiting(timeout=2) and self.session.read() == 0:
-                self.update()
-            else:
-                nb_retries += 1
-                logging.info(
-                    f"{self.header} Closing connection to GPSD ({nb_retries} tries): {self.gpsdhost}:{self.gpsdport}"
-                )
-                self.session.close()
-                self.session = None
-                if nb_retries == 3:
-                    nb_retries = 0
+            try:
+                self.clean()
+                if not self.session and not self.connect():
+                    connection_errors += 1
+                if self.session.waiting(timeout=2) and self.session.read() == 0:
+                    self.update()
+                    connection_errors = 0
+                else:
+                    self.close()
+                    connection_errors += 1
+
+                if connection_errors >= 3:
+                    logging.error(f"{self.header} {connection_errors} connection errors")
                     self.restart_gpsd()
-                self.exit.wait(5)
-            self.plugin_hook()
+                    connection_errors = 0
+                self.plugin_hook()
+            except ConnectionError as exp:
+                logging.error(f"{self.header} Connection Error: {exp}")
+                self.restart_gpsd()
+                connection_errors = 0
 
     def run(self) -> None:
         if not self.is_configured():
@@ -670,7 +675,7 @@ class GPSD_ng(plugins.Plugin):
     __name__: str = "GPSD-ng"
     __GitHub__: str = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
     __author__: str = "@fmatray"
-    __version__: str = "1.9.0"
+    __version__: str = "1.9.1"
     __license__: str = "GPL3"
     __description__: str = (
         "Use GPSD server to save position on handshake. Can use mutiple gps device (serial, USB dongle, phone, etc.)"
