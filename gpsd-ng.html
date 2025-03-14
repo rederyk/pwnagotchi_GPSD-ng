@@ -116,6 +116,15 @@ button.classList.remove('ui-btn-error');
             ({{statistics["nb_position_files"]}} position files for {{statistics["nb_pcap_files"]}} pcap files)<br>
             {{statistics["nb_cached_elevation"]}} cached elevations
     </p>
+    {% if current_position %}
+    <p>
+        <strong>Current position</strong>: {% set lat_long = current_position.format_lat_long() %}
+        <a href="https://www.openstreetmap.org/?mlat={{current_position.latitude}}&mlon={{current_position.longitude}}&zoom=18"
+            target="_blank">
+            {{lat_long[0]}}, {{lat_long[1]}} ({{current_position.fix}})
+        </a>
+    </p>
+    {% endif %}
 </div>
 {% for dkey in positions %}
 <hr>
