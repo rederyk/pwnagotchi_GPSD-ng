@@ -77,7 +77,7 @@ GPSD_OPTIONS="-n" # add -D3 if you need to debug
     - __IOS__: GPS2IP (tested but paid app)
       - Set "operate in background mode"
       - Set "Connection Method" -> "Socket" -> "Port Number" -> 4352
-      - Set "Network selection" -> "Hotspot"
+      - Set "Network selection" -> "Hotspot"  
     - Both cases activate GGA messages to have "3D fix"
 - Check your gpsd configuration with gpsmon or cgps
 - Set ```DEVICES="tcp://PHONEIP:4352"``` in /etc/default/gpsd

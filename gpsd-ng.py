@@ -63,27 +63,31 @@ from pwnagotchi.utils import StatusFile
 @dataclass(slots=True)
 class Position:
     """
-    Keeps data from GPS device
+    Keeps data from a GPS device
     """
 
-    device: str = field(init=True)
+    device: str = field(init=True)  # Device name
+    dummy: bool = False  # Wifi position is a dummy Position as it's not a real GPS device
+    last_update: Optional[datetime] = None
     DATE_FORMAT: str = "%Y-%m-%dT%H:%M:%S.%fZ"
-    FIXES: dict[int, str] = field(
-        default_factory=lambda: {0: "No data", 1: "No fix", 2: "2D fix", 3: "3D fix"}
-    )
+    # Position attributes
     latitude: float = field(default=float("NaN"))
     longitude: float = field(default=float("NaN"))
     altitude: float = field(default=float("NaN"))
     speed: float = field(default=float("NaN"))
     accuracy: float = field(default=float("NaN"))
-    last_fix: Optional[datetime] = None
+    # Fix attributes
+    FIXES: dict[int, str] = field(
+        default_factory=lambda: {0: "No data", 1: "No fix", 2: "2D fix", 3: "3D fix"}
+    )
     mode: int = 0
-    last_update: Optional[datetime] = None
+    last_fix: Optional[datetime] = None
     satellites: list = field(default_factory=list)
-    dummy: bool = False
+
+    # for logs
     header: str = ""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.header = f"[GPSD-NG][{self.device}]"
 
     @property
@@ -129,10 +133,13 @@ class Position:
             self.last_update = datetime.now(tz=UTC)  # Don't use fix.time cause it's not reliable
 
     def update_fix(self, fix: gps.gpsfix, valid: int) -> None:
+        """
+        Update a Postion with the fix data
+        """
         if not gps.MODE_SET & valid:
-            return
+            return  # not a valid data
         now = datetime.now(tz=UTC)
-        if fix.mode >= 2:
+        if fix.mode >= 2:  # 2D and 3D fix
             self.last_fix = now  # Don't use fix.time cause it's not reliable
             self.set_attr("latitude", fix.latitude, valid, gps.LATLON_SET)
             self.set_attr("longitude", fix.longitude, valid, gps.LATLON_SET)
@@ -175,6 +182,9 @@ class Position:
 
     # ---------- JSON DUMP ----------
     def to_dict(self) -> dict[str, int | float | datetime | Optional[str]]:
+        """
+        Used to save to .gps.json files
+        """
         if self.last_fix:
             last_fix = self.last_fix.strftime(self.DATE_FORMAT)
         else:
@@ -195,7 +205,7 @@ class Position:
             Dummy=self.dummy,
         )
 
-    # ---------- FORMAT ----------
+    # ---------- FORMAT for eink and Web UI----------
     def format_info(self) -> str:
         device = re.search(r"(^tcp|^udp|tty.*|wifi)", self.device, re.IGNORECASE)
         dev = f"{device[0]}:" if device else ""
@@ -295,21 +305,37 @@ class Position:
 
 @dataclass(slots=True)
 class GPSD(threading.Thread):
+    """
+    Main thread:
+    - Connect to gpsd server
+    - Read and update/clean positions from gpsd and wifi positioning
+    - cache elevations
+    """
+
+    # gpsd connection
     gpsdhost: Optional[str] = None
     gpsdport: Optional[int] = None
+    session: gps.gps = None
+    # Data reading
     fix_timeout: int = 120
     update_timeout: int = 120
-    session: gps.gps = None
-    positions: dict = field(default_factory=dict)  # Device:Position dictionnary
     main_device: Optional[str] = None
-    known_wifi_positions: dict[str, dict[str, float]] = field(default_factory=dict)
-    last_position: Optional[Position] = None
-    elevation_data: dict = field(default_factory=dict)
     last_clean: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
+    positions: dict = field(default_factory=dict)  # Device:Position dictionnary
+    last_position: Optional[Position] = None
+    # Wifi potisioning
+    wifi_positions: dict[str, dict[str, float]] = field(default_factory=dict)
+    last_wifi_positioning_save: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
+    wifi_positioning_report: Optional[StatusFile] = None
+    # Open Elevation
+    elevation_data: dict = field(default_factory=dict)
     elevation_report: Optional[StatusFile] = None
     last_elevation: datetime = field(default_factory=lambda: datetime(2025, 1, 1, 0, 0, tzinfo=UTC))
+    # hook
     last_hook: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
     lost_position_sent: bool = False
+
+    # Thread and logs
     lock: threading.Lock = field(default_factory=threading.Lock)
     exit: threading.Event = field(default_factory=lambda: threading.Event())
     header: str = "[GPSD-ng][Thread]"
@@ -317,7 +343,7 @@ class GPSD(threading.Thread):
     def __post_init__(self) -> None:
         super(GPSD, self).__init__()
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return super(GPSD, self).__hash__()
 
     # ---------- CONFIGURE AND CONNECTION ----------
@@ -329,19 +355,27 @@ class GPSD(threading.Thread):
         fix_timeout: int,
         update_timeout: int,
         main_device: str,
-        cache_file: str,
+        cache_filename: str,
         save_elevations: bool,
+        wifi_positioning_filename: Optional[str],
     ) -> None:
-        self.gpsdhost = gpsdhost
-        self.gpsdport = gpsdport
-        self.fix_timeout = fix_timeout
-        self.update_timeout = update_timeout
+        self.gpsdhost, self.gpsdport = gpsdhost, gpsdport
+        self.fix_timeout, self.update_timeout = fix_timeout, update_timeout
         self.main_device = main_device
         if save_elevations:
-            self.elevation_report = StatusFile(cache_file, data_format="json")
+            logging.info(f"{self.header} Reading elevation cache")
+            self.elevation_report = StatusFile(cache_filename, data_format="json")
             self.elevation_data = self.elevation_report.data_field_or("elevations", default=dict())
+            logging.info(f"{self.header} {len(self.elevation_data)} locations already in cache")
+
+        if wifi_positioning_filename:
+            logging.info(f"{self.header} Reading wifi position cache")
+            self.wifi_positioning_report = StatusFile(wifi_positioning_filename, data_format="json")
+            self.wifi_positions = self.wifi_positioning_report.data_field_or(
+                "wifi_positions", default=dict()
+            )
+            logging.info(f"{self.header} {len(self.wifi_positions)} wifi locations in cache")
         logging.info(f"{self.header} Thread configured")
-        logging.info(f"{self.header} {len(self.elevation_data)} locations already in cache")
 
     def is_configured(self) -> bool:
         return (self.gpsdhost, self.gpsdport) != (None, None)
@@ -365,13 +399,13 @@ class GPSD(threading.Thread):
     def is_connected(self) -> bool:
         return self.session is not None
 
-    def close(self):
-        logging.info(f"{self.header} GPSD connection closed")
+    def close(self) -> None:
         self.session.close()
         self.session = None
+        logging.info(f"{self.header} GPSD connection closed")
 
     # ---------- RELOAD/ RESTART GPSD SERVER ----------
-    def reload_or_restart_gpsd(self):
+    def reload_or_restart_gpsd(self) -> None:
         try:
             logging.info(f"{self.header} Trying to reload gpsd server")
             subprocess.run(
@@ -386,7 +420,7 @@ class GPSD(threading.Thread):
             logging.error(f"{self.header} Error while reloading gpsd: {exp}")
         self.restart_gpsd()
 
-    def restart_gpsd(self):
+    def restart_gpsd(self) -> None:
         try:
             logging.info(f"{self.header} Trying to restart gpsd server")
             subprocess.run(
@@ -403,10 +437,12 @@ class GPSD(threading.Thread):
     def update(self) -> None:
         with self.lock:
             if not ((gps.ONLINE_SET & self.session.valid) and (device := self.session.device)):
-                return
+                return  # not a TPV or SKY
             if not device in self.positions:
                 self.positions[device] = Position(device=device)
                 logging.info(f"{self.header} New device append: {device}")
+
+            # Update fix
             self.positions[device].update_fix(self.session.fix, self.session.valid)
             if gps.ALTITUDE_SET & self.session.valid:  # cache altitude
                 self.positions[device].update_altitude(self.session.fix.altMSL)
@@ -418,7 +454,10 @@ class GPSD(threading.Thread):
             else:  # retreive altitude
                 altitude = self.get_elevation(self.session.fix.latitude, self.session.fix.longitude)
                 self.positions[device].update_altitude(altitude)
+
+            # update satellites
             self.positions[device].update_satellites(self.session.satellites, self.session.valid)
+
             # Soft reset session after reading
             self.session.valid = 0
             self.session.device = None
@@ -427,7 +466,7 @@ class GPSD(threading.Thread):
 
     def clean(self) -> None:
         if not self.update_timeout:
-            return
+            return  # keep positions forever
         if (datetime.now(tz=UTC) - self.last_clean).total_seconds() < 10:
             return
         self.last_clean = datetime.now(tz=UTC)
@@ -438,13 +477,21 @@ class GPSD(threading.Thread):
                     logging.info(f"{self.header} Cleaning {device}")
 
     # ---------- WIFI POSITIONNING ----------
-    def update_wifi_positions(self, bssid: str, lat: float, long: float, alt: float):
-        self.known_wifi_positions[bssid] = dict(latitude=lat, longitude=long, altitude=alt)
+    def save_wifi_positions(self) -> None:
+        if (datetime.now(tz=UTC) - self.last_wifi_positioning_save).total_seconds() < 60:
+            return
+        self.last_wifi_positioning_save = datetime.now(tz=UTC)
+        if self.wifi_positioning_report and self.wifi_positions:
+            logging.info(f"{self.header} Saving wifi positions")
+            self.wifi_positioning_report.update(data={"wifi_positions": self.wifi_positions})
 
-    def update_wifi(self, bssids: list[str]):
+    def update_wifi_positions(self, bssid: str, lat: float, long: float, alt: float) -> None:
+        self.wifi_positions[bssid] = dict(latitude=lat, longitude=long, altitude=alt)
+
+    def update_wifi(self, bssids: list[str]) -> None:
         points = list()
-        for bssid in filter(lambda b: b in self.known_wifi_positions, bssids):
-            points.append(self.known_wifi_positions[bssid])
+        for bssid in filter(lambda b: b in self.wifi_positions, bssids):
+            points.append(self.wifi_positions[bssid])
         if len(points) < 3:  # skip if not enought points
             return
         # Calculate the box containing all points
@@ -456,11 +503,18 @@ class GPSD(threading.Thread):
             max(points, key=lambda p: p["latitude"])["latitude"],
             max(points, key=lambda p: p["longitude"])["longitude"],
         )
-        if geopy.distance.distance(box_min, box_max).meters > 30:  # skip if the box is too large
+        if geopy.distance.distance(box_min, box_max).meters > 50:  # skip if the box is too large
             return
-        latitude = statistics.median([p["latitude"] for p in points])
-        longitude = statistics.median([p["longitude"] for p in points])
-        altitude = statistics.median([p["altitude"] for p in points if p["altitude"]])
+        try:  # using median rather than mean to be more representative
+            latitude = statistics.median([p["latitude"] for p in points])
+            longitude = statistics.median([p["longitude"] for p in points])
+        except statistics.StatisticsError:
+            return
+        try:
+            altitude = statistics.median([p["altitude"] for p in points if p["altitude"]])
+        except statistics.StatisticsError:
+            altitude = self.get_elevation(latitude, longitude)  # try to use cache if no altitude
+
         with self.lock:
             if "wifi" not in self.positions:
                 self.positions["wifi"] = Position(accuracy=50, device="wifi", dummy=True)
@@ -471,10 +525,16 @@ class GPSD(threading.Thread):
             self.positions["wifi"].altitude = altitude
             self.positions["wifi"].last_update = datetime.now(tz=UTC)
             self.positions["wifi"].last_fix = datetime.now(tz=UTC)
-            self.positions["wifi"].mode = 3
+            if math.isnan(altitude):
+                self.positions["wifi"].mode = 2
+            else:
+                self.positions["wifi"].mode = 3
 
     # ---------- MAIN LOOP ----------
     def plugin_hook(self) -> None:
+        """
+        Trigger position_available() evry 10s if a position is else position_lost() is called once
+        """
         if (datetime.now(tz=UTC) - self.last_hook).total_seconds() < 10:
             return
         self.last_hook = datetime.now(tz=UTC)
@@ -486,6 +546,9 @@ class GPSD(threading.Thread):
             self.lost_position_sent = True
 
     def loop(self) -> None:
+        """
+        Main thread loo. Handles gpsd connection and raw reading
+        """
         logging.info(f"{self.header} Starting gpsd thread loop")
         connection_errors = 0
 
@@ -512,6 +575,9 @@ class GPSD(threading.Thread):
                 connection_errors = 0
 
     def run(self) -> None:
+        """
+        Called by GPSD.start()
+        """
         if not self.is_configured():
             logging.critical(f"{self.header} GPSD thread not configured.")
             return
@@ -522,7 +588,10 @@ class GPSD(threading.Thread):
             logging.critical(f"{self.header} Critical error during loop: {exp}")
 
     def join(self, timeout=None) -> None:
-        self.exit.set()
+        """
+        End the thread
+        """
+        self.exit.set()  # end loop
         try:
             super(GPSD, self).join(timeout)
         except Exception as e:
@@ -530,6 +599,9 @@ class GPSD(threading.Thread):
 
     # ---------- POSITION ----------
     def get_position_device(self) -> Optional[str]:
+        """
+        Returns the device with the best position
+        """
         if not self.is_configured():
             return None
         with self.lock:
@@ -551,6 +623,9 @@ class GPSD(threading.Thread):
             return None
 
     def get_position(self) -> Optional[Position]:
+        """
+        Returns the best position. If no position available, send the last postition within fix timout.
+        """
         try:
             if device := self.get_position_device():
                 self.last_position = self.positions[device]
@@ -588,10 +663,14 @@ class GPSD(threading.Thread):
 
     def save_elevation_cache(self) -> None:
         if self.elevation_report:
-            logging.info(f"{self.header} Saving elevation cache")
+            logging.info(f"{self.header}[Elevation] Saving elevation cache")
             self.elevation_report.update(data={"elevations": self.elevation_data})
 
     def calculate_locations(self, max_dist: int = 100) -> list[dict[str, float]]:
+        """
+        Calculates gps points for circles every 10m and up to 100m.
+        Rounding is an efficiant way to decrease the number of points.
+        """
         locations = list()
 
         def append_location(latitude: float, longitude: float) -> None:
@@ -599,23 +678,46 @@ class GPSD(threading.Thread):
                 lat, long = self.round_position(latitude, longitude)
                 locations.append({"latitude": lat, "longitude": long})
 
-        if not (coords := self.get_position()):
+        if not (coords := self.get_position()):  # No current position
             return []
         if coords.mode != 2:  # No cache if we have a no fix or good Fix
             return []
-        append_location(coords.latitude, coords.longitude)
+        append_location(coords.latitude, coords.longitude)  # Add current position
         center = self.round_position(coords.latitude, coords.longitude)
         for dist in range(10, max_dist + 1, 10):
             for degree in range(0, 360):
                 point = geopy.distance.distance(meters=dist).destination(center, bearing=degree)
                 append_location(point.latitude, point.longitude)
         seen = []
-        for l in locations:
+        for l in locations:  # Filter duplicates
             if not l in seen:
                 seen.append(l)
         return seen
 
+    def fetch_open_elevation(self, locations: list[dict[str, float]]) -> Optional[dict]:
+        """
+        Retreive elevations from open-elevation
+        """
+        try:
+            response = requests.post(
+                url="https://api.open-elevation.com/api/v1/lookup",
+                headers={"Accept": "application/json", "content-type": "application/json"},
+                data=json.dumps(dict(locations=locations)),
+                timeout=10,
+            )
+            response.raise_for_status()
+            results = response.json()["results"]
+            return results
+        except requests.RequestException as e:
+            logging.error(f"{self.header}[Elevation] Error with open-elevation: {e}")
+        except json.JSONDecodeError:
+            logging.error(f"{self.header}[Elevation] Error while reading json")
+        return None
+
     def update_cache_elevation(self) -> None:
+        """
+        Use open-elevation API to cache surrounding GPS points.
+        """
         if not (
             self.is_configured()
             and (datetime.now(tz=UTC) - self.last_elevation).total_seconds() > 60
@@ -624,58 +726,47 @@ class GPSD(threading.Thread):
         self.last_elevation = datetime.now(tz=UTC)
         if not (locations := self.calculate_locations()):
             return
-        logging.info(
-            f"{self.header} Elevation cache: {len(self.elevation_data)} elevations available"
-        )
-        logging.info(f"{self.header} Trying to cache {len(locations)} locations")
-        try:
-            res = requests.post(
-                url="https://api.open-elevation.com/api/v1/lookup",
-                headers={"Accept": "application/json", "content-type": "application/json"},
-                data=json.dumps(dict(locations=locations)),
-                timeout=10,
-            )
-            if not res.status_code == 200:
-                logging.error(
-                    f"{self.header} Error with open-elevation: {res.reason}({res.status_code})"
-                )
-                return
-        except Exception as e:
-            logging.error(f"{self.header} Error with open-elevation: {e}")
+        logging.info(f"{self.header}[Elevation] {len(self.elevation_data)} elevations available")
+        logging.info(f"{self.header}[Elevation] Trying to cache {len(locations)} locations")
+        if not (results := self.fetch_open_elevation(locations)):
             return
         with self.lock:
-            for item in res.json()["results"]:
+            for item in results:
                 self.cache_elevation(item["latitude"], item["longitude"], item["elevation"])
             self.save_elevation_cache()
-        logging.info(f"{self.header} {len(self.elevation_data)} elevations in cache")
+        logging.info(f"{self.header}[Elevation] {len(self.elevation_data)} elevations in cache")
 
 
 @dataclass(slots=True)
 class GPSD_ng(plugins.Plugin):
+    # GPSD Thread and configuration
     gpsd: GPSD = field(default_factory=lambda: GPSD())
-    display_fields: list[str] = field(default_factory=list)
-    handshake_dir: str = ""
     use_open_elevation: bool = True
+    wifi_positioning: bool = False
+    handshake_dir: str = ""
+    #  e-ink display
+    last_ui_update: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
+    ui_counter: int = 0
+    view_mode: str = "compact"
+    display_fields: list[str] = field(default_factory=list)
+    units: str = "metric"
+    display_precision: int = 6
     position: str = "127,64"
     linespacing: int = 10
-    ui_counter: int = 0
-    last_ui_update: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
-    wifi_positioning: bool = False
-    view_mode: str = "compact"
-    display_precision: int = 6
-    units: str = "metric"
     show_faces: bool = True
     lost_face_1: str = "(O_o )"
     lost_face_2: str = "( o_O)"
     face_1: str = "(•_• )"
     face_2: str = "( •_•)"
+    # Web UI
     template: str = "Loading error"
+
     ready: bool = False
 
     __name__: str = "GPSD-ng"
     __GitHub__: str = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
     __author__: str = "@fmatray"
-    __version__: str = "1.9.1"
+    __version__: str = "1.9.2"
     __license__: str = "GPL3"
     __description__: str = (
         "Use GPSD server to save position on handshake. Can use mutiple gps device (serial, USB dongle, phone, etc.)"
@@ -689,12 +780,12 @@ class GPSD_ng(plugins.Plugin):
 
     def __post_init__(self) -> None:
         super(plugins.Plugin, self).__init__()
-        template_file = os.path.dirname(os.path.realpath(__file__)) + "/" + "gpsd-ng.html"
+        template_filename = os.path.dirname(os.path.realpath(__file__)) + "/" + "gpsd-ng.html"
         try:
-            with open(template_file, "r") as fb:
+            with open(template_filename, "r") as fb:
                 self.template = fb.read()
         except IOError as e:
-            logging.error(f"{self.header} Cannot read template file {template_file}: {e}")
+            logging.error(f"{self.header} Cannot read template file {template_filename}: {e}")
 
     # ----------LOAD AND CONFIGURE ----------
     def on_loaded(self) -> None:
@@ -703,13 +794,54 @@ class GPSD_ng(plugins.Plugin):
     def on_config_changed(self, config: dict) -> None:
         logging.info(f"{self.header} Reading configuration")
 
+        # GPSD Thread
+        gpsdhost = self.options.get("gpsdhost", "127.0.0.1")
+        gpsdport = int(self.options.get("gpsdport", 2947))
+        main_device = self.options.get("main_device", None)
+        fix_timeout = self.options.get("fix_timeout", 120)
+        update_timeout = self.options.get("update_timeout", 120)
+        if update_timeout < fix_timeout:
+            logging.error(f"{self.header} 'update_timeout' cannot be lesser than 'fix_timeout'.")
+            logging.error(f"{self.header} Setting 'update_timeout' to 'fix_timeout'.")
+            update_timeout = fix_timeout
+        # open-elevation
+        self.handshake_dir = config["bettercap"].get("handshakes")
+        self.use_open_elevation = self.options.get("use_open_elevation", self.use_open_elevation)
+        save_elevations = self.options.get("save_elevations", True)
+        # wifi positioning
+        self.wifi_positioning = self.options.get("wifi_positioning", self.wifi_positioning)
+        wifi_positioning_filename = None
+        if self.wifi_positioning:
+            wifi_positioning_filename = os.path.join(self.handshake_dir, ".wifi_positioning")
+
+        self.gpsd.configure(
+            gpsdhost=gpsdhost,
+            gpsdport=gpsdport,
+            fix_timeout=fix_timeout,
+            update_timeout=update_timeout,
+            main_device=main_device,
+            cache_filename=os.path.join(self.handshake_dir, ".elevations"),
+            save_elevations=save_elevations,
+            wifi_positioning_filename=wifi_positioning_filename,
+        )
+        if self.wifi_positioning:
+            self.read_position_files()
+
+        try:  # Start gpsd thread
+            self.gpsd.start()
+        except Exception as e:
+            logging.critical(f"{self.header} Error with GPSD Thread: {e}")
+            logging.critical(f"{self.header} Stop plugin")
+            return
+
+        # view mode
         self.view_mode = self.options.get("view_mode", self.view_mode).lower()
         if not self.view_mode in ["compact", "full", "status", "none"]:
             logging.error(
                 f"{self.header} Wrong setting for view_mode: {self.view_mode}. Using compact"
             )
             self.view_mode = "compact"
-
+        # fields ton display
         DISPLAY_FIELDS = ["info", "altitude", "speed"]
         display_fields = self.options.get("fields", DISPLAY_FIELDS)
         if isinstance(display_fields, str):
@@ -726,40 +858,13 @@ class GPSD_ng(plugins.Plugin):
             self.display_fields.insert(0, "longitude")
         if "latitude" not in self.display_fields:
             self.display_fields.insert(0, "latitude")
-
-        self.handshake_dir = config["bettercap"].get("handshakes")
-        gpsdhost = self.options.get("gpsdhost", "127.0.0.1")
-        gpsdport = int(self.options.get("gpsdport", 2947))
-        main_device = self.options.get("main_device", None)
-        fix_timeout = self.options.get("fix_timeout", 120)
-        update_timeout = self.options.get("update_timeout", 120)
-        if update_timeout < fix_timeout:
-            logging.error(f"{self.header} 'update_timeout' cannot be lesser than 'fix_timeout'.")
-            logging.error(f"{self.header} Setting 'update_timeout' to 'fix_timeout'.")
-            update_timeout = fix_timeout
-
-        self.use_open_elevation = self.options.get("use_open_elevation", self.use_open_elevation)
-        save_elevations = self.options.get("save_elevations", True)
-
-        self.wifi_positioning = self.options.get("wifi_positioning", self.wifi_positioning)
-        if self.wifi_positioning:
-            self.read_position_files()
-        self.gpsd.configure(
-            gpsdhost=gpsdhost,
-            gpsdport=gpsdport,
-            fix_timeout=fix_timeout,
-            update_timeout=update_timeout,
-            main_device=main_device,
-            cache_file=os.path.join(self.handshake_dir, ".elevations"),
-            save_elevations=save_elevations,
-        )
-
+        # units and precision. only for display
         self.units = self.options.get("units", self.units).lower()
         if not self.units in ["metric", "imperial"]:
             logging.error(f"{self.header} Wrong setting for units: {self.units}. Using metric")
             self.units = "metric"
         self.display_precision = int(self.options.get("display_precision", self.display_precision))
-
+        # UI items
         self.position = self.options.get("position", self.position)
         self.linespacing = self.options.get("linespacing", self.linespacing)
         self.show_faces = self.options.get("show_faces", self.show_faces)
@@ -768,12 +873,6 @@ class GPSD_ng(plugins.Plugin):
         self.face_1 = self.options.get("face_1", self.face_1)
         self.face_2 = self.options.get("face_2", self.face_2)
 
-        try:
-            self.gpsd.start()
-        except Exception as e:
-            logging.critical(f"{self.header} Error with GPSD Thread: {e}")
-            logging.critical(f"{self.header} Stop plugin")
-            return
         logging.info(f"{self.header} Configuration done")
         self.ready = True
 
@@ -800,17 +899,23 @@ class GPSD_ng(plugins.Plugin):
                     pass
 
     # ---------- BLUETOOTH ----------
-    def on_bluetooth_up(self, phone: dict):
+    def on_bluetooth_up(self, phone: dict) -> None:
+        """
+        Restart gpsd server on bluetooth reconnection
+        """
         self.gpsd.reload_or_restart_gpsd()
 
-    # ---------- WIFI POSITIONNING ----------
-    def read_position_files(self):
+    # ---------- WIFI POSITIONING ----------
+    def read_position_files(self) -> None:
+        """
+        Read gps.json and geo.json files for wifi poistioning
+        """
         files = glob(os.path.join(self.handshake_dir, "*.g*.json"))
         logging.info(f"{self.header} Reading gps/geo files ({len(files)}) for wifi positionning")
-        nb = 0
+        nb_files = 0
         for file in files:
-            if not os.path.getsize(file):
-                continue
+            if not self.is_gpsfile_valid(file):
+                continue  # continue if the file is not valid
             try:
                 bssid = re.findall(r".*_([0-9a-f]{12})\.", file)[0]
             except IndexError:
@@ -826,12 +931,15 @@ class GPSD_ng(plugins.Plugin):
                         long=data["Longitude"],
                         alt=data["Altitude"],
                     )
-                    nb += 1
+                    nb_files += 1
             except (IOError, TypeError) as e:
                 logging.error(f"{self.header} Error on reading file {file}: {e}")
-        logging.info(f"{self.header} {nb} initial files used for wifi positioning")
+        logging.info(f"{self.header} {nb_files} initial files used for wifi positioning")
 
-    def update_wifi_positions(self, aps, coords: Position):
+    def update_wifi_positions(self, aps, coords: Position) -> None:
+        """
+        Update wifi position based on a list for access points
+        """
         if coords.device == "wifi":
             return
         for ap in aps:
@@ -840,6 +948,7 @@ class GPSD_ng(plugins.Plugin):
             except KeyError:
                 continue
             self.gpsd.update_wifi_positions(mac, coords.latitude, coords.longitude, coords.altitude)
+        self.gpsd.save_wifi_positions()
 
     # ---------- UPDATES ----------
     def update_bettercap_gps(self, agent, coords: Position) -> None:
@@ -871,7 +980,7 @@ class GPSD_ng(plugins.Plugin):
     def is_gpsfile_valid(gps_filename: str) -> bool:
         return os.path.exists(gps_filename) and os.path.getsize(gps_filename) > 0
 
-    def complete_missings(self, aps, coords: Position):
+    def complete_missings(self, aps, coords: Position) -> None:
         for ap in aps:
             try:
                 mac = ap["mac"].replace(":", "")
@@ -913,7 +1022,7 @@ class GPSD_ng(plugins.Plugin):
         if not self.ready:
             return
         if not (coords := self.gpsd.get_position()):
-            logging.info(f"{self.header} not saving GPS: no fix")
+            logging.info(f"{self.header} Not saving GPS: no fix")
             return
         self.update_bettercap_gps(agent, coords)
         gps_filename = filename.replace(".pcap", ".gps.json")
@@ -1016,12 +1125,12 @@ class GPSD_ng(plugins.Plugin):
         if not self.ready:
             return None
 
-        pcap_files = glob(os.path.join(self.handshake_dir, "*.pcap"))
-        nb_pcap_files = len(pcap_files)
+        pcap_filenames = glob(os.path.join(self.handshake_dir, "*.pcap"))
+        nb_pcap_files = len(pcap_filenames)
         nb_position_files = 0
-        for pcap_file in pcap_files:
-            gps_filename = pcap_file.replace(".pcap", ".gps.json")
-            geo_filename = pcap_file.replace(".pcap", ".geo.json")
+        for pcap_filename in pcap_filenames:
+            gps_filename = pcap_filename.replace(".pcap", ".gps.json")
+            geo_filename = pcap_filename.replace(".pcap", ".geo.json")
             if self.is_gpsfile_valid(gps_filename) or self.is_gpsfile_valid(geo_filename):
                 nb_position_files += 1
         try:
@@ -1140,7 +1249,7 @@ class GPSD_ng(plugins.Plugin):
                     pass
 
     def on_webhook(self, path: str, request) -> str:
-        def error(message):
+        def error(message) -> str:
             return render_template("status.html", title="Error", go_back_after=10, message=message)
 
         if not self.ready:
