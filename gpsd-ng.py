@@ -482,44 +482,43 @@ class GPSD(threading.Thread):
             return
         self.last_wifi_positioning_save = datetime.now(tz=UTC)
         if self.wifi_positioning_report and self.wifi_positions:
-            logging.info(f"{self.header} Saving wifi positions")
+            logging.info(f"{self.header}[wifi]  Saving wifi positions")
             self.wifi_positioning_report.update(data={"wifi_positions": self.wifi_positions})
 
     def update_wifi_positions(self, bssid: str, lat: float, long: float, alt: float) -> None:
         if math.isnan(lat) or math.isnan(long):
             return
-        if math.isnan(alt):
+        if alt is None or math.isnan(alt):
             alt = self.get_elevation(lat, long)
         self.wifi_positions[bssid] = dict(latitude=lat, longitude=long, altitude=alt)
 
     def update_wifi(self, bssids: list[str]) -> None:
-        points = list()
-        for bssid in filter(lambda b: b in self.wifi_positions, bssids):
-            points.append(self.wifi_positions[bssid])
+        def extract(attr: str) -> list[float]:  # Filter and extract from the list of dict
+            return list(filter(math.isfinite, filter(None, [p[attr] for p in points])))
+
+        points = [self.wifi_positions[bssid] for bssid in bssids if bssid in self.wifi_positions]
+
         if len(points) < 3:  # skip if not enought points
             return
+
+        latitudes, longitudes = extract("latitude"), extract("longitude")
+        if len(latitudes) != len(longitudes):  # skip if doesn't have not the same length
+            logging.error(f"{self.header}[wifi] Latitudes and longitudes have not the same length")
+            return
         # Calculate the box containing all points
-        box_min = (
-            min(points, key=lambda p: p["latitude"])["latitude"],
-            min(points, key=lambda p: p["longitude"])["longitude"],
-        )
-        box_max = (
-            max(points, key=lambda p: p["latitude"])["latitude"],
-            max(points, key=lambda p: p["longitude"])["longitude"],
-        )
+        box_min, box_max = (min(latitudes), min(longitudes)), (max(latitudes), max(longitudes))
         if geopy.distance.distance(box_min, box_max).meters > 50:  # skip if the box is too large
             return
-        try:  # using median rather than mean to be more representative
-            latitude = statistics.median([p["latitude"] for p in points])
-            longitude = statistics.median([p["longitude"] for p in points])
+        try:  # Using median rather than mean to be more representative
+            latitude, longitude = statistics.median(latitudes), statistics.median(longitudes)
         except statistics.StatisticsError:
             return
 
         try:
-            altitudes = [p["altitude"] for p in points]
-            altitudes = list(filter(lambda p: not (p is None or math.isnan(p)), altitudes))
-            altitude = statistics.median(altitudes)
+            altitude = statistics.median(extract("altitude"))
         except statistics.StatisticsError:
+            altitude = float("NaN")
+        if math.isnan(altitude):
             altitude = self.get_elevation(latitude, longitude)  # try to use cache if no altitude
 
         with self.lock:
@@ -1041,7 +1040,7 @@ class GPSD_ng(plugins.Plugin):
         if self.view_mode == "none":
             return
         try:
-            pos = [int(x.strip()) for x in self.position.split(",")]
+            pos = list(map(int, self.position.split(",")))
             lat_pos = (pos[0] + 5, pos[1])
             lon_pos = (pos[0], pos[1] + self.linespacing)
             alt_pos = (pos[0] + 5, pos[1] + (2 * self.linespacing))
