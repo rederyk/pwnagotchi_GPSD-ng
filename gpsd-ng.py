@@ -440,7 +440,7 @@ class GPSD(threading.Thread):
                 return  # not a TPV or SKY
             if not device in self.positions:
                 self.positions[device] = Position(device=device)
-                logging.info(f"{self.header} New device append: {device}")
+                logging.info(f"{self.header} New device: {device}")
 
             # Update fix
             self.positions[device].update_fix(self.session.fix, self.session.valid)
@@ -486,6 +486,8 @@ class GPSD(threading.Thread):
             self.wifi_positioning_report.update(data={"wifi_positions": self.wifi_positions})
 
     def update_wifi_positions(self, bssid: str, lat: float, long: float, alt: float) -> None:
+        if math.isnan(lat) or math.isnan(long):
+            return
         self.wifi_positions[bssid] = dict(latitude=lat, longitude=long, altitude=alt)
 
     def update_wifi(self, bssids: list[str]) -> None:
@@ -510,15 +512,18 @@ class GPSD(threading.Thread):
             longitude = statistics.median([p["longitude"] for p in points])
         except statistics.StatisticsError:
             return
+
         try:
-            altitude = statistics.median([p["altitude"] for p in points if p["altitude"]])
+            altitudes = [p["altitude"] for p in points]
+            altitudes = list(filter(lambda p: not (p is None or math.isnan(p)), altitudes))
+            altitude = statistics.median(altitudes)
         except statistics.StatisticsError:
             altitude = self.get_elevation(latitude, longitude)  # try to use cache if no altitude
 
         with self.lock:
             if "wifi" not in self.positions:
                 self.positions["wifi"] = Position(accuracy=50, device="wifi", dummy=True)
-                logging.info(f"{self.header} New device append: wifi")
+                logging.info(f"{self.header} New device: wifi")
 
             self.positions["wifi"].latitude = latitude
             self.positions["wifi"].longitude = longitude
@@ -706,8 +711,7 @@ class GPSD(threading.Thread):
                 timeout=10,
             )
             response.raise_for_status()
-            results = response.json()["results"]
-            return results
+            return response.json()["results"]
         except requests.RequestException as e:
             logging.error(f"{self.header}[Elevation] Error with open-elevation: {e}")
         except json.JSONDecodeError:
@@ -923,16 +927,16 @@ class GPSD_ng(plugins.Plugin):
             try:
                 with open(file, "r") as fb:
                     data = json.load(fb)
-                    if "Device" in data and data["Device"] == "wifi":
+                    if data.get("Device", None) == "wifi":
                         continue  # remove wifi based positions
                     self.gpsd.update_wifi_positions(
                         bssid=bssid,
-                        lat=data["Latitude"],
-                        long=data["Longitude"],
-                        alt=data["Altitude"],
+                        lat=data.get("Latitude", float("NaN")),
+                        long=data.get("Longitude", float("NaN")),
+                        alt=data.get("Altitude", float("NaN")),
                     )
                     nb_files += 1
-            except (IOError, TypeError) as e:
+            except (IOError, TypeError, KeyError) as e:
                 logging.error(f"{self.header} Error on reading file {file}: {e}")
         logging.info(f"{self.header} {nb_files} initial files used for wifi positioning")
 
