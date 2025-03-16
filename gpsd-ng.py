@@ -116,12 +116,12 @@ class Position:
 
     def __lt__(self, other: Self) -> bool:
         if self.last_fix and other.last_fix:
-            return (self.dummy, self.mode, -self.last_fix.timestamp()) < (
-                other.dummy,
+            return (not self.dummy, self.mode, self.last_fix) < (
+                not other.dummy,
                 other.mode,
-                -other.last_fix.timestamp(),
+                other.last_fix,
             )
-        return False
+        return True
 
     # ---------- UPDATES ----------
     def set_attr(self, attr: str, value: Any, valid: int, flag: int) -> None:
@@ -621,7 +621,7 @@ class GPSD(threading.Thread):
             try:
                 # Filter devices without coords and sort by best positionning/most recent
                 dev_pos = list(filter(lambda x: x[1].is_valid(), self.positions.items()))
-                dev_pos = sorted(dev_pos, key=lambda x: x[1])
+                dev_pos = sorted(dev_pos, key=lambda x: x[1], reverse=True)
                 return dev_pos[0][0]  # Get first and best element
             except IndexError:
                 logging.debug(f"{self.header} No valid position")
