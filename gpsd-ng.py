@@ -621,7 +621,7 @@ class GPSD(threading.Thread):
             try:
                 # Filter devices without coords and sort by best positionning/most recent
                 dev_pos = list(filter(lambda x: x[1].is_valid(), self.positions.items()))
-                dev_pos = sorted(dev_pos, key=lambda x: x[1], reverse=True)
+                dev_pos = sorted(dev_pos, key=lambda x: x[1])
                 return dev_pos[0][0]  # Get first and best element
             except IndexError:
                 logging.debug(f"{self.header} No valid position")
@@ -770,7 +770,7 @@ class GPSD_ng(plugins.Plugin):
     __name__: str = "GPSD-ng"
     __GitHub__: str = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
     __author__: str = "@fmatray"
-    __version__: str = "1.9.6"
+    __version__: str = "1.9.7"
     __license__: str = "GPL3"
     __description__: str = (
         "Use GPSD server to save position on handshake. Can use mutiple gps device (serial, USB dongle, phone, etc.)"
