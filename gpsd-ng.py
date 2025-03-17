@@ -60,6 +60,10 @@ from pwnagotchi.ui.view import BLACK
 from pwnagotchi.utils import StatusFile
 
 
+def now() -> datetime:
+    return datetime.now(tz=UTC)
+
+
 @dataclass(slots=True)
 class Position:
     """
@@ -106,13 +110,13 @@ class Position:
     def last_update_ago(self) -> Optional[int]:
         if not self.last_update:
             return None
-        return round((datetime.now(tz=UTC) - self.last_update).total_seconds())
+        return round((now() - self.last_update).total_seconds())
 
     @property
     def last_fix_ago(self) -> Optional[int]:
         if not self.last_fix:
             return None
-        return round((datetime.now(tz=UTC) - self.last_fix).total_seconds())
+        return round((now() - self.last_fix).total_seconds())
 
     def __lt__(self, other: Self) -> bool:
         if self.last_fix and other.last_fix:
@@ -130,7 +134,7 @@ class Position:
         """
         if flag & valid:
             setattr(self, attr, value)
-            self.last_update = datetime.now(tz=UTC)  # Don't use fix.time cause it's not reliable
+            self.last_update = now()  # Don't use fix.time cause it's not reliable
 
     def update_fix(self, fix: gps.gpsfix, valid: int) -> None:
         """
@@ -138,9 +142,8 @@ class Position:
         """
         if not gps.MODE_SET & valid:
             return  # not a valid data
-        now = datetime.now(tz=UTC)
         if fix.mode >= 2:  # 2D and 3D fix
-            self.last_fix = now  # Don't use fix.time cause it's not reliable
+            self.last_fix = now()  # Don't use fix.time cause it's not reliable
             self.set_attr("latitude", fix.latitude, valid, gps.LATLON_SET)
             self.set_attr("longitude", fix.longitude, valid, gps.LATLON_SET)
             self.set_attr("speed", fix.speed, valid, gps.SPEED_SET)
@@ -148,7 +151,7 @@ class Position:
             self.accuracy = 50
             return
         # reset fix after 10s without fix
-        if self.last_fix and (now - self.last_fix).total_seconds() < 10:
+        if self.last_fix and (now() - self.last_fix).total_seconds() < 10:
             return
         self.latitude = float("NaN")
         self.longitude = float("NaN")
@@ -169,7 +172,7 @@ class Position:
     def is_old(self, date: Optional[datetime], max_seconds: int) -> Optional[bool]:
         if not date:
             return None
-        return (datetime.now(tz=UTC) - date).total_seconds() > max_seconds
+        return (now() - date).total_seconds() > max_seconds
 
     def is_update_old(self, max_seconds: int) -> Optional[bool]:
         return self.is_old(self.last_update, max_seconds)
@@ -251,7 +254,7 @@ class Position:
         spd = self.format_speed(units)
         return info, lat, long, alt, spd
 
-    def generate_polar_plot(self) -> Optional[str]:
+    def generate_polar_plot(self) -> str:
         """
         Return a polar image (base64) of seen satellites.
         Thanks to https://github.com/rai68/gpsd-easy/blob/main/gpsdeasy.py
@@ -262,7 +265,7 @@ class Position:
             logging.error(
                 f"{self.header} Error while importing matplotlib for generate_polar_plot()"
             )
-            return None
+            return ""
 
         try:
             rc("grid", color="#316931", linewidth=1, linestyle="-")
@@ -320,19 +323,20 @@ class GPSD(threading.Thread):
     fix_timeout: int = 120
     update_timeout: int = 120
     main_device: Optional[str] = None
-    last_clean: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
+    last_clean: datetime = field(default_factory=lambda: now())
     positions: dict = field(default_factory=dict)  # Device:Position dictionnary
     last_position: Optional[Position] = None
     # Wifi potisioning
     wifi_positions: dict[str, dict[str, float]] = field(default_factory=dict)
-    last_wifi_positioning_save: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
+    last_wifi_positioning_save: datetime = field(default_factory=lambda: now())
     wifi_positioning_report: Optional[StatusFile] = None
+    wifi_positioning_dirty: bool = False
     # Open Elevation
     elevation_data: dict = field(default_factory=dict)
     elevation_report: Optional[StatusFile] = None
     last_elevation: datetime = field(default_factory=lambda: datetime(2025, 1, 1, 0, 0, tzinfo=UTC))
     # hook
-    last_hook: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
+    last_hook: datetime = field(default_factory=lambda: now())
     lost_position_sent: bool = False
 
     # Thread and logs
@@ -451,6 +455,7 @@ class GPSD(threading.Thread):
                     self.session.fix.longitude,
                     self.session.fix.altMSL,
                 )
+                self.save_elevation_cache()
             else:  # retreive altitude
                 altitude = self.get_elevation(self.session.fix.latitude, self.session.fix.longitude)
                 self.positions[device].update_altitude(altitude)
@@ -467,9 +472,9 @@ class GPSD(threading.Thread):
     def clean(self) -> None:
         if not self.update_timeout:
             return  # keep positions forever
-        if (datetime.now(tz=UTC) - self.last_clean).total_seconds() < 10:
+        if (now() - self.last_clean).total_seconds() < 10:
             return
-        self.last_clean = datetime.now(tz=UTC)
+        self.last_clean = now()
         with self.lock:
             for device in list(self.positions.keys()):
                 if self.positions[device].is_update_old(self.update_timeout):
@@ -478,19 +483,26 @@ class GPSD(threading.Thread):
 
     # ---------- WIFI POSITIONNING ----------
     def save_wifi_positions(self) -> None:
-        if (datetime.now(tz=UTC) - self.last_wifi_positioning_save).total_seconds() < 60:
+        if not self.wifi_positioning_report or not self.wifi_positions:
+            return  # nothing to save
+        if not self.wifi_positioning_dirty:
+            return  # Save only if dirty
+        if (now() - self.last_wifi_positioning_save).total_seconds() < 60:
             return
-        self.last_wifi_positioning_save = datetime.now(tz=UTC)
-        if self.wifi_positioning_report and self.wifi_positions:
-            logging.info(f"{self.header}[wifi]  Saving wifi positions")
-            self.wifi_positioning_report.update(data={"wifi_positions": self.wifi_positions})
+        self.last_wifi_positioning_save = now()
+        logging.info(f"{self.header}[wifi] Saving wifi positions")
+        self.wifi_positioning_report.update(data={"wifi_positions": self.wifi_positions})
+        self.wifi_positioning_dirty = False
 
     def update_wifi_positions(self, bssid: str, lat: float, long: float, alt: float) -> None:
         if math.isnan(lat) or math.isnan(long):
             return
         if alt is None or math.isnan(alt):
             alt = self.get_elevation(lat, long)
-        self.wifi_positions[bssid] = dict(latitude=lat, longitude=long, altitude=alt)
+        pos = dict(latitude=lat, longitude=long, altitude=alt)
+        if bssid not in self.wifi_positions or self.wifi_positions[bssid] != pos:
+            self.wifi_positions[bssid] = pos
+            self.wifi_positioning_dirty = True
 
     def update_wifi(self, bssids: list[str]) -> None:
         def extract(attr: str) -> list[float]:  # Filter and extract from the list of dict
@@ -529,21 +541,18 @@ class GPSD(threading.Thread):
             self.positions["wifi"].latitude = latitude
             self.positions["wifi"].longitude = longitude
             self.positions["wifi"].altitude = altitude
-            self.positions["wifi"].last_update = datetime.now(tz=UTC)
-            self.positions["wifi"].last_fix = datetime.now(tz=UTC)
-            if math.isnan(altitude):
-                self.positions["wifi"].mode = 2
-            else:
-                self.positions["wifi"].mode = 3
+            self.positions["wifi"].last_update = now()
+            self.positions["wifi"].last_fix = now()
+            self.positions["wifi"].mode = 3 if math.isfinite(altitude) else 2
 
     # ---------- MAIN LOOP ----------
     def plugin_hook(self) -> None:
         """
         Trigger position_available() evry 10s if a position is else position_lost() is called once
         """
-        if (datetime.now(tz=UTC) - self.last_hook).total_seconds() < 10:
+        if (now() - self.last_hook).total_seconds() < 10:
             return
-        self.last_hook = datetime.now(tz=UTC)
+        self.last_hook = now()
         if coords := self.get_position():
             plugins.on("position_available", coords.to_dict())
             self.lost_position_sent = False
@@ -575,6 +584,7 @@ class GPSD(threading.Thread):
                     self.restart_gpsd()
                     connection_errors = 0
                 self.plugin_hook()
+                self.save_wifi_positions()
             except ConnectionError as exp:
                 logging.error(f"{self.header} Connection Error: {exp}")
                 self.restart_gpsd()
@@ -658,7 +668,6 @@ class GPSD(threading.Thread):
         key = self.elevation_key(latitude, longitude)
         if not key in self.elevation_data:
             self.elevation_data[key] = elevation
-            self.save_elevation_cache()
 
     def get_elevation(self, latitude: float, longitude: float) -> float:
         key = self.elevation_key(latitude, longitude)
@@ -684,10 +693,16 @@ class GPSD(threading.Thread):
                 lat, long = self.round_position(latitude, longitude)
                 locations.append({"latitude": lat, "longitude": long})
 
+        # Retreive wifi_positions with None or NaN altitudes
+        for wifi_point in filter(
+            lambda p: p["altitude"] is None or math.isnan(p["altitude"]),
+            self.wifi_positions.values(),
+        ):
+            append_location(wifi_point["latitude"], wifi_point["longitude"])
         if not (coords := self.get_position()):  # No current position
-            return []
+            return locations
         if coords.mode != 2:  # No cache if we have a no fix or good Fix
-            return []
+            return locations
         append_location(coords.latitude, coords.longitude)  # Add current position
         center = self.round_position(coords.latitude, coords.longitude)
         for dist in range(10, max_dist + 1, 10):
@@ -700,7 +715,7 @@ class GPSD(threading.Thread):
                 seen.append(l)
         return seen
 
-    def fetch_open_elevation(self, locations: list[dict[str, float]]) -> Optional[dict]:
+    def fetch_open_elevation(self, locations: list[dict[str, float]]) -> dict:
         """
         Retreive elevations from open-elevation
         """
@@ -717,18 +732,15 @@ class GPSD(threading.Thread):
             logging.error(f"{self.header}[Elevation] Error with open-elevation: {e}")
         except json.JSONDecodeError:
             logging.error(f"{self.header}[Elevation] Error while reading json")
-        return None
+        return {}
 
     def update_cache_elevation(self) -> None:
         """
         Use open-elevation API to cache surrounding GPS points.
         """
-        if not (
-            self.is_configured()
-            and (datetime.now(tz=UTC) - self.last_elevation).total_seconds() > 60
-        ):
+        if not self.is_configured() or (now() - self.last_elevation).total_seconds() < 60:
             return
-        self.last_elevation = datetime.now(tz=UTC)
+        self.last_elevation = now()
         if not (locations := self.calculate_locations()):
             return
         logging.info(f"{self.header}[Elevation] {len(self.elevation_data)} elevations available")
@@ -750,7 +762,7 @@ class GPSD_ng(plugins.Plugin):
     wifi_positioning: bool = False
     handshake_dir: str = ""
     #  e-ink display
-    last_ui_update: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
+    last_ui_update: datetime = field(default_factory=lambda: now())
     ui_counter: int = 0
     view_mode: str = "compact"
     display_fields: list[str] = field(default_factory=list)
@@ -771,7 +783,7 @@ class GPSD_ng(plugins.Plugin):
     __name__: str = "GPSD-ng"
     __GitHub__: str = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
     __author__: str = "@fmatray"
-    __version__: str = "1.9.71"
+    __version__: str = "1.9.75"
     __license__: str = "GPL3"
     __description__: str = (
         "Use GPSD server to save position on handshake. Can use mutiple gps device (serial, USB dongle, phone, etc.)"
@@ -953,7 +965,6 @@ class GPSD_ng(plugins.Plugin):
             except KeyError:
                 continue
             self.gpsd.update_wifi_positions(mac, coords.latitude, coords.longitude, coords.altitude)
-        self.gpsd.save_wifi_positions()
 
     # ---------- UPDATES ----------
     def update_bettercap_gps(self, agent, coords: Position) -> None:
@@ -1233,9 +1244,9 @@ class GPSD_ng(plugins.Plugin):
     def on_ui_update(self, ui) -> None:
         if not self.ready or self.view_mode == "none":
             return
-        if (datetime.now(tz=UTC) - self.last_ui_update).total_seconds() < 10:
+        if (now() - self.last_ui_update).total_seconds() < 10:
             return
-        self.last_ui_update = datetime.now(tz=UTC)
+        self.last_ui_update = now()
 
         self.ui_counter = (self.ui_counter + 1) % 5
         with ui._lock:
