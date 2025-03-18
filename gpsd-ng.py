@@ -455,7 +455,7 @@ class GPSD(threading.Thread):
                     self.session.fix.longitude,
                     self.session.fix.altMSL,
                 )
-                self.save_elevation_cache()
+                self.save_wifi_positions()
             else:  # retreive altitude
                 altitude = self.get_elevation(self.session.fix.latitude, self.session.fix.longitude)
                 self.positions[device].update_altitude(altitude)
@@ -485,8 +485,8 @@ class GPSD(threading.Thread):
     def save_wifi_positions(self) -> None:
         if not self.wifi_positioning_report or not self.wifi_positions:
             return  # nothing to save
-        if not self.wifi_positioning_dirty:
-            return  # Save only if dirty
+        if not self.wifi_positioning_dirty: # Save only if dirty
+            return
         if (now() - self.last_wifi_positioning_save).total_seconds() < 60:
             return
         self.last_wifi_positioning_save = now()
