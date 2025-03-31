@@ -64,6 +64,10 @@ def now() -> datetime:
     return datetime.now(tz=UTC)
 
 
+def extract_stripped_mac(ap: dict[str, Any]) -> str:
+    return ap["mac"].replace(":", "").strip()
+
+
 @dataclass(slots=True)
 class Position:
     """
@@ -210,7 +214,7 @@ class Position:
 
     # ---------- FORMAT for eink and Web UI----------
     def format_info(self) -> str:
-        device = re.search(r"(^tcp|^udp|tty.*|wifi)", self.device, re.IGNORECASE)
+        device = re.search(r"(^tcp|^udp|tty.*|rfcomm\d*|wifi)", self.device, re.IGNORECASE)
         dev = f"{device[0]}:" if device else ""
         return f"{dev}{self.fix} ({self.used_satellites}/{self.seen_satellites} Sats)"
 
@@ -485,7 +489,7 @@ class GPSD(threading.Thread):
     def save_wifi_positions(self) -> None:
         if not self.wifi_positioning_report or not self.wifi_positions:
             return  # nothing to save
-        if not self.wifi_positioning_dirty: # Save only if dirty
+        if not self.wifi_positioning_dirty:  # Save only if dirty
             return
         if (now() - self.last_wifi_positioning_save).total_seconds() < 60:
             return
@@ -783,7 +787,7 @@ class GPSD_ng(plugins.Plugin):
     __name__: str = "GPSD-ng"
     __GitHub__: str = "https://github.com/fmatray/pwnagotchi_GPSD-ng"
     __author__: str = "@fmatray"
-    __version__: str = "1.9.75"
+    __version__: str = "1.9.8"
     __license__: str = "GPL3"
     __description__: str = (
         "Use GPSD server to save position on handshake. Can use mutiple gps device (serial, USB dongle, phone, etc.)"
@@ -961,7 +965,7 @@ class GPSD_ng(plugins.Plugin):
             return
         for ap in aps:
             try:
-                mac = ap["mac"].replace(":", "")
+                mac = extract_stripped_mac(ap)
             except KeyError:
                 continue
             self.gpsd.update_wifi_positions(mac, coords.latitude, coords.longitude, coords.altitude)
@@ -999,7 +1003,7 @@ class GPSD_ng(plugins.Plugin):
     def complete_missings(self, aps, coords: Position) -> None:
         for ap in aps:
             try:
-                mac = ap["mac"].replace(":", "")
+                mac = extract_stripped_mac(ap)
                 hostname = re.sub(r"[^a-zA-Z0-9]", "", ap["hostname"])
             except KeyError:
                 continue
@@ -1031,7 +1035,7 @@ class GPSD_ng(plugins.Plugin):
             if self.wifi_positioning:
                 self.update_wifi_positions(aps, coords)
         if self.wifi_positioning:
-            bssids = [ap["mac"].replace(":", "") for ap in aps]
+            bssids = list(map(extract_stripped_mac, aps))
             self.gpsd.update_wifi(bssids)
 
     def on_handshake(self, agent, filename: str, access_point, client_station) -> None:
