@@ -552,9 +552,9 @@ class GPSD(threading.Thread):
     # ---------- MAIN LOOP ----------
     def plugin_hook(self) -> None:
         """
-        Trigger position_available() evry 10s if a position is else position_lost() is called once
+        Trigger position_available() evry 30s if a position is else position_lost() is called once
         """
-        if (now() - self.last_hook).total_seconds() < 10:
+        if (now() - self.last_hook).total_seconds() < 30:
             return
         self.last_hook = now()
         if coords := self.get_position():
@@ -566,33 +566,55 @@ class GPSD(threading.Thread):
 
     def loop(self) -> None:
         """
-        Main thread loo. Handles gpsd connection and raw reading
+        Main thread loop. Handles gpsd connection and raw reading
         """
         logging.info(f"{self.header} Starting gpsd thread loop")
         connection_errors = 0
-
+        consecutive_successful_reads = 0  # Track consecutive successful operations
+    
         while not self.exit.is_set():
             try:
                 self.clean()
+                
+                # Try to connect if not connected
                 if not self.session and not self.connect():
                     connection_errors += 1
-                if self.session.waiting(timeout=2) and self.session.read() == 0:
-                    self.update()
-                    connection_errors = 0
+                    consecutive_successful_reads = 0
+                    logging.warning(f"{self.header} Connection failed, errors: {connection_errors}")
                 else:
-                    self.close()
-                    connection_errors += 1
-
-                if connection_errors >= 3:
-                    logging.error(f"{self.header} {connection_errors} connection errors")
+                    # Try to read data
+                    if self.session and self.session.waiting(timeout=8) and self.session.read() == 0:
+                        self.update()
+                        consecutive_successful_reads += 1
+                        
+                        # Only reset connection errors after several consecutive successful reads
+                        if consecutive_successful_reads >= 3:
+                            if connection_errors > 0:
+                                logging.info(f"{self.header} Connection stabilized, resetting error count")
+                            connection_errors = 0
+                            consecutive_successful_reads = 3  # Cap it to avoid overflow
+                    else:
+                        # Connection/read failed
+                        self.close()
+                        connection_errors += 1
+                        consecutive_successful_reads = 0
+                        logging.warning(f"{self.header} Read failed, errors: {connection_errors}")
+    
+                # Restart GPSD service if too many errors
+                if connection_errors >= 5:
+                    logging.error(f"{self.header} {connection_errors} connection errors, restarting GPSD service")
                     self.restart_gpsd()
                     connection_errors = 0
+                    consecutive_successful_reads = 0
+                    
                 self.plugin_hook()
                 self.save_wifi_positions()
+                
             except ConnectionError as exp:
                 logging.error(f"{self.header} Connection Error: {exp}")
                 self.restart_gpsd()
                 connection_errors = 0
+                consecutive_successful_reads = 0
 
     def run(self) -> None:
         """
