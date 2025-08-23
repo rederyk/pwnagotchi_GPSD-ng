@@ -564,13 +564,17 @@ class GPSD(threading.Thread):
             plugins.on("position_lost")
             self.lost_position_sent = True
 
+
+
+
+
+
     def loop(self) -> None:
         """
         Main thread loop. Handles gpsd connection and raw reading
         """
         logging.info(f"{self.header} Starting gpsd thread loop")
         connection_errors = 0
-        consecutive_successful_reads = 0  # Track consecutive successful operations
     
         while not self.exit.is_set():
             try:
@@ -579,33 +583,39 @@ class GPSD(threading.Thread):
                 # Try to connect if not connected
                 if not self.session and not self.connect():
                     connection_errors += 1
-                    consecutive_successful_reads = 0
                     logging.warning(f"{self.header} Connection failed, errors: {connection_errors}")
-                else:
-                    # Try to read data
-                    if self.session and self.session.waiting(timeout=8) and self.session.read() == 0:
-                        self.update()
-                        consecutive_successful_reads += 1
-                        
-                        # Only reset connection errors after several consecutive successful reads
-                        if consecutive_successful_reads >= 3:
-                            if connection_errors > 0:
-                                logging.info(f"{self.header} Connection stabilized, resetting error count")
+                    continue
+                
+                # Try to read data
+                if self.session and self.session.waiting(timeout=8) and self.session.read() == 0:
+                    # Contiamo i dispositivi con fix GPS prima dell'update
+                    devices_with_fix_before = sum(1 for pos in self.positions.values() if pos.is_fixed()) if self.positions else 0
+                    
+                    self.update()
+                    
+                    # Contiamo i dispositivi con fix GPS dopo l'update  
+                    devices_with_fix_after = sum(1 for pos in self.positions.values() if pos.is_fixed()) if self.positions else 0
+                    
+                    # Reset SOLO se abbiamo dispositivi con fix GPS reale (mode >= 2)
+                    if devices_with_fix_after > 0:
+                        if connection_errors > 0:
+                            logging.info(f"{self.header} GPS fix available ({devices_with_fix_after} devices), resetting error count")
                             connection_errors = 0
-                            consecutive_successful_reads = 3  # Cap it to avoid overflow
                     else:
-                        # Connection/read failed
-                        self.close()
+                        # Nessun fix GPS
                         connection_errors += 1
-                        consecutive_successful_reads = 0
-                        logging.warning(f"{self.header} Read failed, errors: {connection_errors}")
+                        logging.warning(f"{self.header} No GPS fix available, errors: {connection_errors}")
+                else:
+                    # Read failed
+                    self.close()
+                    connection_errors += 1
+                    logging.warning(f"{self.header} Read failed, errors: {connection_errors}")
     
                 # Restart GPSD service if too many errors
                 if connection_errors >= 5:
                     logging.error(f"{self.header} {connection_errors} connection errors, restarting GPSD service")
                     self.restart_gpsd()
                     connection_errors = 0
-                    consecutive_successful_reads = 0
                     
                 self.plugin_hook()
                 self.save_wifi_positions()
@@ -614,7 +624,11 @@ class GPSD(threading.Thread):
                 logging.error(f"{self.header} Connection Error: {exp}")
                 self.restart_gpsd()
                 connection_errors = 0
-                consecutive_successful_reads = 0
+
+
+
+
+
 
     def run(self) -> None:
         """
@@ -918,6 +932,12 @@ class GPSD_ng(plugins.Plugin):
 
         logging.info(f"{self.header} Configuration done")
         self.ready = True
+
+
+
+
+
+
 
     def on_ready(self, agent) -> None:
         try:
